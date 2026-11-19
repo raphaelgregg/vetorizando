@@ -48,6 +48,7 @@
         <div id="stats" class="stats"></div>
       </div>
       <div id="viewer" class="viewer"></div>
+      <div id="legend" class="legend" hidden><span><i style="border-color:#00b3ff"></i>reta</span><span><i style="border-color:#16a34a"></i>arco circular</span><span><i style="border-color:#a855f7"></i>arco elíptico</span><span><i style="border-color:#f59e0b"></i>curva Bézier</span><span><i style="border-color:#ff8a00;background:#ff8a00"></i>alças</span></div>
       <div class="bar"><div id="prog" class="prog"><i></i><span></span></div><button id="next" class="primary">Continuar → Exportar</button></div>
     </section>
 
@@ -61,12 +62,18 @@
             <div id="adv" class="advgrid"></div>
           </details>
           <h2>Formato</h2>
-          <div class="seg fmt">
-            <button class="on">SVG</button>
-            <button disabled title="Em breve">PDF</button>
-            <button disabled title="Em breve">EPS</button>
-            <button disabled title="Em breve">DXF</button>
+          <div id="fmt" class="seg fmt" role="group" aria-label="Formato de saída"></div>
+          <p id="fmthint" class="summary"></p>
+          <h2>Tamanho</h2>
+          <div class="sizebox">
+            <label>Unidade
+              <select id="unit"><option value="px">px</option><option value="mm">mm</option><option value="cm">cm</option><option value="%">%</option></select>
+            </label>
+            <label>DPI <input id="dpi" type="number" min="36" max="2400" step="1" value="96" /></label>
+            <label>Largura <input id="sw" type="number" min="0.01" step="any" /></label>
+            <label>Altura <input id="sh" type="number" min="0.01" step="any" /></label>
           </div>
+          <p id="sizeinfo" class="summary"></p>
           <button id="download" class="primary big">Baixar SVG</button>
           <p id="summary" class="summary"></p>
         </div>
