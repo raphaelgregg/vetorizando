@@ -1,0 +1,12 @@
+{
+  "_doc": "Limites de regressão (medidos em 2026-11 com margem). HD95 só em casos de bordas duras: em degradês a quantização cria bandas que o original não tem.",
+  "default": {},
+  "cases": {
+    "logo":         { "ssim": 0.98, "deltaE": 0.6, "hd95": 1.5, "nodes": 110 },
+    "icon":         { "ssim": 0.98, "deltaE": 0.7, "hd95": 1.5, "nodes": 80 },
+    "illustration": { "ssim": 0.95, "deltaE": 2.5, "nodes": 300 },
+    "photo":        { "ssim": 0.85, "deltaE": 6.5, "nodes": 5000 },
+    "lineart":      { "ssim": 0.97, "deltaE": 0.8, "hd95": 1.5, "nodes": 170 },
+    "stripes":      { "ssim": 0.98, "deltaE": 0.6, "hd95": 1.5, "nodes": 45 }
+  }
+}

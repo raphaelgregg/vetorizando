@@ -19,13 +19,37 @@ npm run build      # typecheck + build estático em dist/
 - **UI** (`src/ui`, `src/main.ts`): upload por arrastar/clicar/`Ctrl+V` com validação, 4 exemplos em 1 clique, estúdio com **Antes/Depois deslizante**, zoom/pan (roda, arrastar, pinça, duplo clique), **Raio‑X** (nós e alças), presets, ajustes avançados recolhíveis com reprocessamento ao vivo, tema claro/escuro, download SVG.
 - **Testes**: 9 testes do motor (círculo, quadrado, anel com furo, fundo, transparência, empilhado, casos degenerados, SVG válido, determinismo) + verificação ponta a ponta no Chromium (fluxo completo, download, erro de formato, sem erros no console). CI em `.github/workflows/ci.yml`.
 
+## Benchmark de qualidade (`npm run bench`)
+
+Compara o **raster original** com o **SVG renderizado** (renderizador `resvg`, independente do nosso motor) usando:
+
+| Métrica | Significado |
+|---|---|
+| **SSIM** | similaridade estrutural na luminância (janela 7×7; 1 = idêntico) |
+| **ΔE / ΔE95** | diferença de cor CIE76 média e percentil 95 |
+| **HD95 / HDmax** | distância de Hausdorff (percentil 95 / máxima, em px) entre mapas de bordas fortes (ΔE ≥ 25) |
+| **nós, KB, ms** | complexidade, tamanho do SVG e tempo |
+
+```bash
+npm run bench                          # casos embutidos + pares em bench/pairs
+npm run bench -- --no-builtin          # só os pares de referência
+npm run bench -- --out out --json r.json --preset illustration
+```
+
+- **Casos embutidos** (`bench/cases.ts`): logo, ícone, ilustração, foto/degradê, lineart, listras — gerados de fontes vetoriais com anti-aliasing, então reproduzíveis sem arquivos binários.
+- **Pares de referência** (`bench/pairs/`): coloque `nome.png|jpg` + opcional `nome.ref.svg` (SVG de outra ferramenta) e `nome.json` (preset/opções). O SVG de referência aparece numa linha `↳ ref` para comparação direta de SSIM/ΔE/HD/nós. Ver `bench/pairs/README.md`.
+- **Regressão**: `bench/thresholds.json` define limites por caso; `npm test` falha se algum caso piorar; a taxa de sucesso é impressa no final.
+- Hausdorff só é significativo com bordas duras: em degradês a quantização cria “bandas” que o original não tem (por isso HD95 não é exigido em ilustração/foto).
+
+Resultados atuais (SSIM / ΔE / HD95 px / nós): logo 0,990 / 0,28 / 1,0 / 76 · ícone 0,992 / 0,37 / 1,0 / 51 · lineart 0,988 / 0,44 / 1,0 / 125 · listras 0,992 / 0,28 / 0 / 32 · ilustração 0,967 / 1,80 / – / 220 · foto 0,870 / 5,28 / – / 3690.
+
 ## Lacunas conhecidas (próximas iterações)
 
-1. **Excesso de nós em bordas suaves** (ex.: círculo grande gera dezenas de nós): falta ajuste de **arcos** e fusão de segmentos G1; a suavização por média móvel é simples. Meta: círculo ≤ 8 nós.
-2. **Bordas com anti-aliasing** viram pequenas "bolhas" de tons intermediários; falta tratar a transição antes de rotular (ou contorno por campo de cobertura/subpixel).
+1. **Texto/formas pequenas** ainda geram muitos nós (ruído de ±0,15 px no raster); falta arco elíptico e fusão pós-ajuste.
+2. **Degradês** viram bandas (limite da quantização por cores); foto SSIM ≈ 0,87.
 3. **Gap filler** hoje é traço por caminho (`paint-order`); falta validação automática de ausência de fendas.
 4. **Exportadores PDF / EPS / DXF**, **unidades (mm/cm/%)** e DPI: ainda não.
-5. **Benchmark de qualidade** (SSIM, ΔE, Hausdorff, nós) e conjunto de imagens de referência: ainda não (preciso de pares imagem → SVG de referência).
+5. **Pares de referência reais** (imagem → SVG de outra ferramenta) ainda não foram adicionados a `bench/pairs/`.
 6. Imagens são reduzidas a 1400 px no lado maior no processamento; **Rust/WASM** para desempenho e precisão em imagens grandes.
 7. Editar paleta (trocar/mesclar cores) no estúdio; colar URL de imagem; i18n/en; testes E2E automatizados no CI.
 

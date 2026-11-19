@@ -39,7 +39,7 @@ export const CASES: BenchCase[] = [
       <circle cx="282" cy="369" r="230" fill="url(#c)"/><circle cx="102" cy="410" r="154" fill="url(#d)"/>`, '#10243a'),
   },
   {
-    id: 'lineart', preset: 'cnc',
+    id: 'lineart', preset: 'logo',
     svg: wrap(`<g fill="none" stroke="#111" stroke-width="7" stroke-linecap="round"><circle cx="256" cy="256" r="170"/>
       <path d="M120 300C180 200 330 400 392 212"/><path d="M150 150L362 150L256 360Z"/></g>`),
   },
