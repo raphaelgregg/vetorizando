@@ -1,4 +1,4 @@
-import { toSVG } from '../engine/svg';
+import { HEX_COLORS, SvgColors, toSVG } from '../engine/svg';
 import type { Options, VDoc } from '../engine/types';
 import { toDXF } from './dxf';
 import { toEPS } from './eps';
@@ -24,11 +24,11 @@ export const FORMATS: { id: Format; label: string; hint: string }[] = [
 ];
 
 /** Exporta o documento no formato e tamanho pedidos (unidades px/mm/cm/% e DPI). */
-export function exportDoc(format: Format, doc: VDoc, o: Options, spec: SizeSpec, origW: number, origH: number): Exported {
+export function exportDoc(format: Format, doc: VDoc, o: Options, spec: SizeSpec, origW: number, origH: number, svgColors: SvgColors = HEX_COLORS): Exported {
   const size = resolveSize(spec, origW, origH, doc.width, doc.height);
   const meta = { width: size.width, height: size.height, unit: size.unit };
   switch (format) {
-    case 'svg': return { data: toSVG(doc, o, { width: size.width, height: size.height, unit: size.unit }), mime: 'image/svg+xml', ext: 'svg', ...meta };
+    case 'svg': return { data: toSVG(doc, o, { width: size.width, height: size.height, unit: size.unit }, svgColors), mime: 'image/svg+xml', ext: 'svg', ...meta };
     case 'pdf': return { data: toPDF(doc, o, size), mime: 'application/pdf', ext: 'pdf', ...meta };
     case 'eps': return { data: toEPS(doc, o, size), mime: 'application/postscript', ext: 'eps', ...meta };
     case 'dxf': return { data: toDXF(doc, o, size), mime: 'application/dxf', ext: 'dxf', ...meta };

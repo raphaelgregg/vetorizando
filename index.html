@@ -47,14 +47,47 @@
         </div>
         <div id="stats" class="stats"></div>
       </div>
+      <div class="studio">
+      <div class="studio-main">
       <div id="viewer" class="viewer"></div>
       <div id="legend" class="legend" hidden><span><i style="border-color:#00b3ff"></i>reta</span><span><i style="border-color:#16a34a"></i>arco circular</span><span><i style="border-color:#a855f7"></i>arco elíptico</span><span><i style="border-color:#f59e0b"></i>curva Bézier</span><span><i style="border-color:#ff8a00;background:#ff8a00"></i>alças</span></div>
+      </div>
+      <aside id="palette" class="palette" aria-label="Paleta de cores do vetor">
+        <h2>Cores <span id="palcount" class="count"></span></h2>
+        <div id="palrows" class="palrows"></div>
+        <div class="palactions">
+          <button id="palbg" class="ghost" title="Torna transparente a camada de fundo (a de maior área)">Remover fundo</button>
+          <button id="palmerge" class="ghost" title="Marque 2 ou mais cores na lista">Mesclar selecionadas</button>
+          <button id="palreset" class="ghost">Restaurar paleta</button>
+        </div>
+        <label class="rangeline">Semelhantes (ΔE ≤ <output id="palsimv">10</output>)
+          <input id="palsim" type="range" min="2" max="40" value="10" />
+        </label>
+        <button id="palsimbtn" class="ghost wide">Mesclar cores semelhantes</button>
+        <p id="palhint" class="summary" aria-live="polite"></p>
+        <div class="svgcolors">
+          <label>Cores no SVG exportado
+            <select id="svgcolor">
+              <option value="hex">Cores fixas (hex)</option>
+              <option value="currentColor">currentColor (herda a cor do CSS)</option>
+              <option value="classes">Classes CSS editáveis</option>
+            </select>
+          </label>
+          <label id="ccwrap" hidden>currentColor = <select id="ccsel"></select></label>
+        </div>
+      </aside>
+      </div>
       <div class="bar"><div id="prog" class="prog"><i></i><span></span></div><button id="next" class="primary">Continuar → Exportar</button></div>
     </section>
 
     <section id="step3" class="panel" hidden>
       <div class="export-grid">
         <div>
+          <div class="seg mode3" id="mode3" role="group" aria-label="O que exportar">
+            <button data-m3="vector" class="on">Vetor</button>
+            <button data-m3="icons">Ícones (Web · Android · iOS)</button>
+          </div>
+          <div id="vecpanel">
           <h2>Tipo de imagem</h2>
           <div id="presets" class="presets"></div>
           <details class="adv">
@@ -76,8 +109,32 @@
           <p id="sizeinfo" class="summary"></p>
           <button id="download" class="primary big">Baixar SVG</button>
           <p id="summary" class="summary"></p>
+          </div>
+          <div id="iconpanel" hidden>
+            <h2>Plataformas</h2>
+            <div class="plat">
+              <label><input type="checkbox" id="icweb" checked /> Web</label>
+              <label><input type="checkbox" id="icand" checked /> Android</label>
+              <label><input type="checkbox" id="icios" checked /> iOS</label>
+            </div>
+            <h2>Aplicativo</h2>
+            <div class="sizebox">
+              <label>Nome <input id="icname" type="text" value="Meu App" /></label>
+              <label>Nome curto <input id="icshort" type="text" value="App" maxlength="12" /></label>
+              <label>Cor do tema <input id="ictheme" type="color" value="#6d5efc" /></label>
+              <label>Cor de fundo <input id="icbg" type="color" value="#ffffff" /></label>
+            </div>
+            <label class="rangeline">Margem interna <output id="icpadv">6%</output>
+              <input id="icpad" type="range" min="0" max="25" value="6" />
+            </label>
+            <button id="icbgorig" class="ghost wide">Usar a cor de fundo da imagem</button>
+            <p class="summary">Ícones iOS e o fundo do Android/maskable são opacos (sem canal alfa). O <code>icon.svg</code> e o Vector Drawable seguem a opção “Cores no SVG exportado” da etapa anterior.</p>
+            <button id="iczip" class="primary big">Baixar .zip (selecionados)</button>
+            <p id="icstatus" class="summary" aria-live="polite"></p>
+          </div>
         </div>
         <div id="viewer2" class="viewer small"></div>
+        <div id="iconfiles" class="iconfiles" hidden></div>
       </div>
       <div class="bar"><div id="prog2" class="prog"><i></i><span></span></div><button id="back" class="ghost">← Voltar</button></div>
     </section>

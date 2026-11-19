@@ -29,6 +29,8 @@ export interface VDoc {
   layers: Layer[]; // ordem de desenho: fundo → frente
   /** há bordas com “nada” (transparência/fundo removido): o preenchimento de fendas deve ser recortado pela união das regiões */
   openBoundary: boolean;
+  /** empilhamento com que o documento foi gerado (a edição de paleta depende dele) */
+  stacking: Stacking;
   stats: {
     nodes: number; // nós finais (segmentos)
     paths: number;

@@ -37,6 +37,37 @@ Prioridades do motor, em ordem: (1) posição/espessura exatas dos contornos, (2
 9. **Preenchimento de fendas correto**: os traços ficam numa camada **abaixo** de todos os preenchimentos (antes ficavam sobre cada forma e engrossavam traços ~0,3 px por lado) e, com transparência/fundo removido, são recortados pela união das regiões (`clipPath` no SVG, `W n` no PDF, `clip` no EPS) para não crescer a silhueta.
 10. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
 
+## Edição de cores no vetor gerado
+
+Painel **Cores** na etapa 2 (Inspecionar), sem reprocessar a imagem — o preview (inclusive Antes/Depois e Raio‑X), o SVG, o PDF, o EPS, o DXF e os ícones refletem a edição na hora.
+
+| Ação | Como |
+|---|---|
+| Editar uma cor | seletor de cor ou campo HEX (`#abc` / `#aabbcc`; inválido fica em vermelho e não é aplicado) |
+| Transparente | botão `∅` da linha (a camada some; o preenchimento de fendas passa a ser recortado pela união das regiões, então a silhueta não engrossa) |
+| Remover fundo | um clique: torna transparente a camada de maior área |
+| Mesclar selecionadas | marque 2+ cores; camadas que ficam com a mesma cor viram uma só (em “Recortes” os caminhos são somados) |
+| Mesclar semelhantes | slider ΔE (CIE76) + botão; cada grupo adota a cor da camada de maior área |
+| Restaurar | por cor (“restaurar”) ou a paleta inteira |
+
+- As edições são indexadas pela **cor original** da camada, então valem também depois de reprocessar com outros ajustes.
+- Em “Empilhado”, ocultar uma camada que não é a de baixo revelaria a camada abaixo; nesse caso o app troca para “Recortes” e reprocessa (com aviso), mantendo as edições.
+- **Cores no SVG exportado**: *hex* (padrão), ***currentColor*** (a cor escolhida herda do CSS da página — ideal para ícones monocromáticos; no Android vira `android:tint="?attr/colorControlNormal"`) ou **classes CSS editáveis** (`<style>.c0{fill:#…}`; as cores ficam num único lugar).
+- Implementação: `src/engine/palette.ts` (funções puras que devolvem um novo documento), `src/ui/palette.ts` (painel).
+
+## Ícones para Web, Android e iOS
+
+Etapa 3 → aba **Ícones (Web · Android · iOS)**: escolha plataformas, nome do app, cor do tema, cor de fundo e margem interna; marque os arquivos que quiser e baixe um **.zip organizado por plataforma** (ou cada arquivo, ou só o selecionado). Os ícones usam o vetor **com as cores editadas**.
+
+| Plataforma | Conteúdo |
+|---|---|
+| **Web** (`web/`) | `favicon.ico` (16, 32, 48 px), `icon.svg`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png` (180, opaco), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `site.webmanifest`, `head-snippet.html` |
+| **Android** (`android/`) | `res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png` (48–192 px) e `ic_launcher_round.png`; Adaptive Icon em `mipmap-anydpi-v26/` (+ `v33` com camada monocromática), `values/ic_launcher_background.xml`; **Vector Drawables** `drawable/ic_launcher_foreground.xml` (108 dp, desenho na zona segura de 66 dp), `ic_launcher_monochrome.xml` e `ic_app_icon.xml` (24 dp, uso geral); `ic_launcher-playstore.png` (512) |
+| **iOS** (`ios/AppIcon.appiconset/`) | todos os tamanhos do Xcode para iPhone, iPad e App Store (20, 29, 40, 60, 76, 83,5 pt em 1×/2×/3× e **1024×1024**), **sem canal alfa** (RGB), e `Contents.json` válido |
+
+- Geração 100% no navegador: SVG → canvas (`src/icons/raster.ts`), PNG/ICO/ZIP escritos à mão ou via `fflate` (`src/icons/*`). O Vector Drawable usa o mesmo preenchimento de fendas do SVG.
+- Cada plataforma traz um `LEIAME.txt` com onde copiar os arquivos.
+
 ## Exportação (SVG · PDF · EPS · DXF), unidades e DPI
 
 Todos os formatos derivam do mesmo modelo vetorial (`src/export`), respeitando **estilo de desenho** (preenchido/contorno), **empilhamento** (recortes/empilhado), **gap filler** e **agrupamento**.

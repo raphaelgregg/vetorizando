@@ -1,10 +1,13 @@
 import './style.css';
 import { PRESETS } from './engine/presets';
-import { toSVG } from './engine/svg';
+import { PaletteEdits, applyPaletteEdits, backgroundOriginal, canHideWithoutReprocess, suggestCurrentColor } from './engine/palette';
+import { SvgColors, toSVG } from './engine/svg';
 import type { Options, VDoc } from './engine/types';
 import { FORMATS, Format, exportDoc } from './export';
 import { SizeSpec, Unit, fmt as fnum, resolveSize, sizeInUnit } from './export/size';
 import { EngineClient } from './ui/client';
+import { initIcons } from './ui/icons';
+import { initPalette } from './ui/palette';
 import { Loaded, LoadError, loadFile } from './ui/loader';
 import { SAMPLES, renderSample, sampleToFile } from './ui/samples';
 import { Mode, Viewer } from './ui/viewer';
@@ -14,6 +17,12 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const state = {
   step: 1,
   loaded: null as Loaded | null,
+  /** vetor como saiu do motor (sem edições) */
+  baseDoc: null as VDoc | null,
+  /** edições de paleta, por cor ORIGINAL */
+  edits: {} as PaletteEdits,
+  svgColors: { mode: 'hex' } as SvgColors,
+  /** vetor com as edições aplicadas: é ele que aparece no preview e vai para todos os exportadores */
   doc: null as VDoc | null,
   svg: '',
   options: { ...PRESETS[0].options } as Options,
@@ -52,6 +61,7 @@ function go(n: number) {
   for (let i = 1; i <= 3; i++) $(`step${i}`).hidden = i !== n;
   document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => b.classList.toggle('on', Number(b.dataset.go) === n));
   requestAnimationFrame(() => (n === 2 ? viewer : viewer2).fit());
+  icons.setActive(n === 3 && mode3 === 'icons');
 }
 document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => b.addEventListener('click', () => go(Number(b.dataset.go))));
 $('next').addEventListener('click', () => go(3));
@@ -65,6 +75,9 @@ async function handleFile(file: File | null | undefined) {
     if (state.loaded) URL.revokeObjectURL(state.loaded.url);
     state.loaded = loaded;
     state.doc = null;
+    state.baseDoc = null;
+    state.edits = {};
+    icons.setName(loaded.name);
     state.size = { unit: 'px', dpi: Number($<HTMLInputElement>('dpi').value) || 96 };
     refreshSize();
     document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => (b.disabled = false));
@@ -111,17 +124,33 @@ async function process() {
   if (!l) return;
   try {
     const doc = await client.run(l.image, state.options, setProgress);
-    state.doc = doc;
-    state.svg = toSVG(doc, state.options, { width: l.origWidth, height: l.origHeight });
-    viewer.setContent(l.url, doc.width, doc.height, state.svg, doc);
-    viewer2.setContent(l.url, doc.width, doc.height, state.svg, doc);
-    renderStats();
+    state.baseDoc = doc;
+    refreshFromEdits();
     setProgress(1, `Pronto em ${Math.round(doc.stats.ms)} ms`);
   } catch (e) {
     if (e instanceof Error && e.message === 'cancelled') return;
     setProgress(0, 'Erro');
     showMsg('Não foi possível vetorizar esta imagem. Tente reduzir o número de cores ou usar uma imagem menor.');
   }
+}
+
+/** Reaplica as edições de paleta ao vetor base e atualiza TUDO que depende dele (preview, Raio‑X, estatísticas, SVG, ícones). */
+let refreshRaf = 0;
+function refreshFromEdits(live = false) {
+  const l = state.loaded;
+  if (!state.baseDoc || !l) return;
+  state.doc = applyPaletteEdits(state.baseDoc, state.edits);
+  const paint = () => {
+    refreshRaf = 0;
+    if (!state.doc || !state.loaded) return;
+    state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight });
+    viewer.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
+    viewer2.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
+    renderStats();
+    syncCurrentColor();
+    icons.invalidate();
+  };
+  if (live) { if (!refreshRaf) refreshRaf = requestAnimationFrame(paint); } else { cancelAnimationFrame(refreshRaf); paint(); palette.render(); }
 }
 
 function renderStats() {
@@ -282,7 +311,7 @@ $('download').addEventListener('click', () => {
   const { w, h } = origDims();
   let e;
   try {
-    e = exportDoc(state.format, state.doc, state.options, state.size, w, h);
+    e = exportDoc(state.format, state.doc, state.options, state.size, w, h, state.svgColors);
   } catch {
     showMsg('Não foi possível gerar o arquivo neste formato.');
     return;
@@ -294,3 +323,69 @@ $('download').addEventListener('click', () => {
 });
 renderFormats();
 refreshSize();
+
+// ---------- paleta de cores (edição sobre o vetor gerado) ----------
+const palette = initPalette({
+  base: () => state.baseDoc,
+  edits: () => state.edits,
+  set(edits, opts) {
+    const base = state.baseDoc;
+    if (!base) return;
+    const newlyHidden = Object.keys(edits).filter((k) => edits[k].hidden && !state.edits[k]?.hidden);
+    state.edits = edits;
+    // em "empilhado", ocultar uma camada que não é a de baixo revelaria a camada de baixo dela (não transparência):
+    // muda para "Recortes" e reprocessa; as edições são por cor original e continuam valendo
+    if (state.options.stacking === 'stacked' && newlyHidden.some((k) => !canHideWithoutReprocess(base, k))) {
+      state.options = { ...state.options, stacking: 'cutouts' };
+      state.preset = 'custom';
+      renderPresets();
+      renderAdvanced();
+      showMsg('Transparência em camadas empilhadas exige o modo “Recortes”: reprocessando a imagem.');
+      palette.render();
+      process();
+      return;
+    }
+    refreshFromEdits(!!opts?.live);
+  },
+});
+
+// ---------- cores do SVG exportado: hex · currentColor · classes CSS ----------
+const svgColor = $<HTMLSelectElement>('svgcolor'), ccsel = $<HTMLSelectElement>('ccsel');
+function syncCurrentColor() {
+  const doc = state.doc;
+  if (!doc) return;
+  const colors = [...new Set(doc.layers.map((l) => l.color))];
+  ccsel.replaceChildren(...colors.map((c) => new Option(c, c)));
+  const want = state.svgColors.currentColor && colors.includes(state.svgColors.currentColor) ? state.svgColors.currentColor : suggestCurrentColor(doc);
+  if (want) ccsel.value = want;
+  if (state.svgColors.mode === 'currentColor') state.svgColors = { mode: 'currentColor', currentColor: want };
+  $('ccwrap').hidden = state.svgColors.mode !== 'currentColor';
+}
+svgColor.addEventListener('change', () => {
+  state.svgColors = { mode: svgColor.value as SvgColors['mode'], currentColor: ccsel.value || undefined };
+  syncCurrentColor();
+  icons.invalidate();
+});
+ccsel.addEventListener('change', () => { state.svgColors = { mode: 'currentColor', currentColor: ccsel.value }; icons.invalidate(); });
+
+// ---------- exportar: vetor ou ícones (Web · Android · iOS) ----------
+let mode3: 'vector' | 'icons' = 'vector';
+const icons = initIcons({
+  doc: () => state.doc,
+  options: () => state.options,
+  svgColors: () => state.svgColors,
+  name: () => state.loaded?.name ?? 'icone',
+  origWidth: () => state.loaded?.origWidth ?? 512,
+  backgroundColor: () => (state.baseDoc ? backgroundOriginal(state.baseDoc) : null),
+});
+function setMode3(m: 'vector' | 'icons') {
+  mode3 = m;
+  document.querySelectorAll<HTMLButtonElement>('[data-m3]').forEach((b) => b.classList.toggle('on', b.dataset.m3 === m));
+  $('vecpanel').hidden = m !== 'vector';
+  $('iconpanel').hidden = m !== 'icons';
+  $('viewer2').hidden = m === 'icons';
+  $('iconfiles').hidden = m !== 'icons';
+  icons.setActive(m === 'icons' && state.step === 3);
+  if (m === 'vector') requestAnimationFrame(() => viewer2.fit());
+}
+document.querySelectorAll<HTMLButtonElement>('[data-m3]').forEach((b) => b.addEventListener('click', () => setMode3(b.dataset.m3 as 'vector' | 'icons')));

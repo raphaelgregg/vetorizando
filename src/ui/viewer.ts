@@ -129,6 +129,8 @@ export class Viewer {
     this.wireEl.style.display = this.wire ? '' : 'none';
     const cmp = m === 'compare' && !this.wire;
     this.b.style.clipPath = cmp ? `inset(0 0 0 ${this.split * rw}px)` : 'none';
+    // o original só aparece à esquerda do divisor: senão ele vazaria por baixo das áreas transparentes do vetor
+    this.a.style.clipPath = cmp ? `inset(0 ${rw - this.split * rw}px 0 0)` : 'none';
     this.handle.style.display = cmp ? '' : 'none';
     this.handle.style.left = `${this.split * rw}px`;
     this.knob.setAttribute('aria-valuenow', String(Math.round(this.split * 100)));
