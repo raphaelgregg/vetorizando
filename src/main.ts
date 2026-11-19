@@ -143,7 +143,7 @@ function refreshFromEdits(live = false) {
   const paint = () => {
     refreshRaf = 0;
     if (!state.doc || !state.loaded) return;
-    state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight });
+    state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight }, { mode: 'hex', gradients: state.svgColors.gradients });
     viewer.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
     viewer2.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
     renderStats();
@@ -159,6 +159,7 @@ function renderStats() {
   const red = st.rawPoints ? Math.round((1 - st.nodes / st.rawPoints) * 100) : 0;
   $('stats').innerHTML = [['nós', st.nodes], ['retas', st.lines], ['arcos', st.arcs], ['elipses', st.ellipses], ['curvas', st.curves], ['caminhos', st.paths], ['cores', st.colors]]
     .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('')
+    + (st.gradients ? `<span class="chip" title="Regiões de variação suave reconstruídas com gradiente linear/radial (menos nós, sem bandas)"><b>${st.gradients}</b> gradiente${st.gradients > 1 ? 's' : ''}</span>` : '')
     + (st.denoised ? `<span class="chip" title="Ruído/artefatos JPEG detectados: pré-filtro com preservação de bordas aplicado antes da vetorização">ruído σ̂ ${st.noise.toFixed(1)} · filtrado</span>` : '')
     + `<span class="chip" title="Pontos de contorno antes do ajuste → nós finais">${st.rawPoints} pts → <b>${st.nodes}</b> nós (−${red}%)</span>`;
   const o = state.options;
@@ -209,7 +210,7 @@ const SELECTS: [keyof Options, string, [string, string][]][] = [
   ['drawStyle', 'Estilo de desenho', [['fill', 'Preenchido'], ['outline', 'Contornos']]],
   ['groupBy', 'Agrupar por', [['none', 'Sem agrupamento'], ['color', 'Cor'], ['layer', 'Camada (ordem de empilhamento)']]],
 ];
-const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['ellipses', 'Ajustar arcos elípticos'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
+const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['ellipses', 'Ajustar arcos elípticos'], ['gradients', 'Detectar gradientes (SVG; PDF/EPS/DXF/Android usam bandas sólidas)'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
 
 function renderAdvanced() {
   const box = $('adv');
@@ -360,15 +361,19 @@ function syncCurrentColor() {
   ccsel.replaceChildren(...colors.map((c) => new Option(c, c)));
   const want = state.svgColors.currentColor && colors.includes(state.svgColors.currentColor) ? state.svgColors.currentColor : suggestCurrentColor(doc);
   if (want) ccsel.value = want;
-  if (state.svgColors.mode === 'currentColor') state.svgColors = { mode: 'currentColor', currentColor: want };
+  if (state.svgColors.mode === 'currentColor') state.svgColors = { ...state.svgColors, mode: 'currentColor', currentColor: want };
+  const hasGrad = doc.layers.some((l) => l.gradient);
+  $('gradwrap').hidden = !hasGrad;
   $('ccwrap').hidden = state.svgColors.mode !== 'currentColor';
 }
+const svgGrad = $<HTMLSelectElement>('svggrad');
+svgGrad.addEventListener('change', () => { state.svgColors = { ...state.svgColors, gradients: svgGrad.value !== 'solid' }; refreshFromEdits(); icons.invalidate(); });
 svgColor.addEventListener('change', () => {
-  state.svgColors = { mode: svgColor.value as SvgColors['mode'], currentColor: ccsel.value || undefined };
+  state.svgColors = { mode: svgColor.value as SvgColors['mode'], currentColor: ccsel.value || undefined, gradients: state.svgColors.gradients };
   syncCurrentColor();
   icons.invalidate();
 });
-ccsel.addEventListener('change', () => { state.svgColors = { mode: 'currentColor', currentColor: ccsel.value }; icons.invalidate(); });
+ccsel.addEventListener('change', () => { state.svgColors = { ...state.svgColors, mode: 'currentColor', currentColor: ccsel.value }; icons.invalidate(); });
 
 // ---------- exportar: vetor ou ícones (Web · Android · iOS) ----------
 let mode3: 'vector' | 'icons' = 'vector';

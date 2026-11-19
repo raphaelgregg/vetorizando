@@ -52,6 +52,19 @@ export const CASES: BenchCase[] = [
       <path d="M0 451C154 379 307 492 512 420L512 512L0 512Z" fill="#1b1237"/>`, ''),
   },
   {
+    // gradientes lineares (fundo 3 stops, botão diagonal), radial (esfera) e regiões sólidas ao lado (barras, vermelho)
+    id: 'gradients', preset: 'illustration',
+    svg: wrap(`<defs>
+        <linearGradient id="bgg" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1b3a8a"/><stop offset="0.55" stop-color="#4f8fe0"/><stop offset="1" stop-color="#bfe3ff"/></linearGradient>
+        <radialGradient id="sph" cx="190" cy="170" r="110" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff2c2"/><stop offset="0.5" stop-color="#f2a33a"/><stop offset="1" stop-color="#9a3d0b"/></radialGradient>
+        <linearGradient id="btn" x1="300" y1="300" x2="470" y2="400" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#26c281"/><stop offset="1" stop-color="#0b6b4c"/></linearGradient>
+      </defs>
+      <rect width="512" height="512" fill="url(#bgg)"/>
+      <circle cx="190" cy="190" r="110" fill="url(#sph)"/>
+      <rect x="290" y="290" width="190" height="120" rx="22" fill="url(#btn)" stroke="#0a2a20" stroke-width="6"/>
+      <rect x="40" y="400" width="60" height="70" fill="#d42a2a"/><rect x="120" y="420" width="60" height="50" fill="#ffffff"/><rect x="200" y="380" width="60" height="90" fill="#111111"/>`, ''),
+  },
+  {
     id: 'photo', preset: 'photo',
     svg: wrap(`<defs>${[['a', '#ff5d73'], ['b', '#38d6c0'], ['c', '#ffd166'], ['d', '#7b61ff']].map(([i, c]) => `<radialGradient id="${i}"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>`).join('')}</defs>
       <circle cx="154" cy="179" r="205" fill="url(#a)"/><circle cx="358" cy="154" r="179" fill="url(#b)"/>

@@ -27,6 +27,10 @@ export function initPalette(host: PaletteHost) {
     sw.setAttribute('aria-label', `Cor ${e.original}`);
     const hex = Object.assign(document.createElement('input'), { type: 'text', value: e.color, maxLength: 7, className: 'hex', spellcheck: false, title: 'Cor em HEX (#rgb ou #rrggbb)' });
     hex.setAttribute('aria-label', `HEX de ${e.original}`);
+    if (e.gradient) {
+      sw.style.cssText = 'outline:2px dashed currentColor;outline-offset:1px';
+      sw.title = 'Região com gradiente (cor média). Escolher uma cor a substitui por cor sólida';
+    }
     const eye = document.createElement('button');
     eye.className = 'eye';
     eye.textContent = '∅';

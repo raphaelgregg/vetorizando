@@ -64,7 +64,7 @@ const soft: Degradation = {
 };
 
 export const DEGRADATIONS: Degradation[] = [jpegQ(95), jpegQ(85), jpegQ(70), jpegQ(50), noise(4), noise(10), soft];
-export const STRESS_CASES = ['logo', 'icon', 'lineart', 'text', 'illustration'];
+export const STRESS_CASES = ['logo', 'icon', 'lineart', 'text', 'illustration', 'gradients'];
 
 export interface StressRow {
   caseId: string; degradation: string; nodes: number; cleanNodes: number;

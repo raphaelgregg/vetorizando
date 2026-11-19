@@ -18,9 +18,23 @@ export interface VPath {
   thin?: boolean;
 }
 
-export interface Layer {
+export interface GradientStop {
+  offset: number; // 0–1
   color: string; // #rrggbb
+}
+
+/** Gradiente em coordenadas do documento (`gradientUnits="userSpaceOnUse"`). */
+export type Gradient =
+  | { kind: 'linear'; x1: number; y1: number; x2: number; y2: number; stops: GradientStop[] }
+  | { kind: 'radial'; cx: number; cy: number; r: number; stops: GradientStop[] };
+
+export interface Layer {
+  color: string; // #rrggbb (com gradiente: cor média, usada em paleta/agrupamento)
   paths: VPath[];
+  /** a região é preenchida com este gradiente (só SVG); `color` é a cor média */
+  gradient?: Gradient;
+  /** bandas sólidas equivalentes (mesma região): usadas por PDF/EPS/DXF/Android e pelo SVG sem gradientes */
+  fallback?: Layer[];
 }
 
 export interface VDoc {
@@ -44,6 +58,7 @@ export interface VDoc {
     recolored: number; // pixels de transição (anti-aliasing) corrigidos
     noise: number; // nível de ruído/artefatos estimado (0 = imagem limpa)
     denoised: boolean; // o pré-filtro foi aplicado
+    gradients: number; // regiões preenchidas com gradiente linear/radial
   };
 }
 
@@ -73,6 +88,7 @@ export interface Options {
   edgeDelta: number; // limpeza de anti-aliasing (ΔE); 0 = desligado
   contourBlur: number; // sigma da suavização subpixel do contorno
   denoise: number; // pré-filtro de ruído/JPEG: 0 = desligado, 1 = automático (só age com evidência), >1 = mais forte
+  gradients: boolean; // detectar gradientes lineares/radiais (SVG); desligado = só cores sólidas
   arcs: boolean; // permitir arcos circulares
   ellipses: boolean; // permitir arcos elípticos
 }
@@ -93,6 +109,7 @@ export const DEFAULT_OPTIONS: Options = {
   edgeDelta: 8,
   contourBlur: 0,
   denoise: 1,
+  gradients: true,
   arcs: true,
   ellipses: true,
 };

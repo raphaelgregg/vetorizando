@@ -3,9 +3,10 @@ import { loopArea, traceField } from './contour';
 import { denoise } from './denoise';
 import { resolveTransitions } from './edges';
 import { fitLoop } from './fit';
+import { analyzeGradients } from './gradient';
 import { quantize } from './quantize';
 import { removeSpeckles } from './segment';
-import type { Layer, Options, Pt, ProgressFn, RawImage, VDoc } from './types';
+import type { Gradient, Layer, Options, Pt, ProgressFn, RawImage, VDoc, VPath } from './types';
 
 /**
  * Raio hidráulico (tinta/perímetro ≈ meia largura) POR ESTRUTURA para cada laço: o contorno externo e seus furos
@@ -96,7 +97,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   removeSpeckles(labels, w, h, o.speckle, palette.map((c) => rgbToLab(...c)));
 
   // áreas e fundo (cor dominante nas bordas)
-  const area = new Float64Array(palette.length);
+  let area = new Float64Array(palette.length);
   for (let i = 0; i < labels.length; i++) if (labels[i] >= 0) area[labels[i]]++;
   let bg = -1;
   if (o.removeBackground && palette.length > 1) {
@@ -110,16 +111,63 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     if (edge > 0 && votes[best] / edge > 0.5) bg = best;
   }
 
-  // ordem de desenho: maiores primeiro (fundo → frente)
-  const order = palette.map((_, i) => i).filter((c) => area[c] > 0 && c !== bg).sort((a, b) => area[b] - area[a]);
+  // gradientes: bandas vizinhas de transição suave são agrupadas e ajustadas; cada grupo recebe rótulos próprios
+  // (as mesmas cores podem existir em outro lugar da imagem como regiões sólidas)
+  const groupLabels: number[][] = [], groupGrad: Gradient[] = [];
+  if (o.gradients && o.drawStyle === 'fill' && palette.length > 1) {
+    progress(0.22, 'Detectando gradientes');
+    const skip = new Uint8Array(labels.length);
+    for (const i of tr.idx) skip[i] = 1;
+    const an = analyzeGradients(img.data, labels, palette, skip, w, h, bg);
+    if (an.groups.length) {
+      const before = labels.slice();
+      const compGroup = new Int32Array(an.compLabel.length).fill(-1);
+      const fresh: Map<number, number>[] = [];
+      an.groups.forEach((g, gi) => { fresh.push(new Map()); for (const c of g.comps) compGroup[c] = gi; });
+      for (let i = 0; i < labels.length; i++) {
+        const c = an.comp[i];
+        if (c < 0 || compGroup[c] < 0) continue;
+        const gi = compGroup[c], old = before[i], m = fresh[gi];
+        let nl = m.get(old);
+        if (nl === undefined) { nl = palette.length; palette.push([...palette[old]] as [number, number, number]); m.set(old, nl); }
+        labels[i] = nl;
+      }
+      an.groups.forEach((g, gi) => { groupLabels.push([...fresh[gi].values()]); groupGrad.push(g.gradient); });
+      // extremos das transições: passam a apontar para os rótulos novos vizinhos
+      const touched = new Set<number>();
+      for (const m of fresh) for (const old of m.keys()) touched.add(old);
+      const remap = (i: number, lab: number): number => {
+        if (!touched.has(lab)) return lab;
+        const x = i % w, y = (i / w) | 0;
+        let bestD = Infinity, out = lab;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const j = yy * w + xx, d = dx * dx + dy * dy;
+          if (before[j] === lab && d < bestD) { bestD = d; out = labels[j]; }
+        }
+        return out;
+      };
+      for (let k = 0; k < tr.idx.length; k++) { const i = tr.idx[k]; tr.a[k] = remap(i, tr.a[k]); tr.b[k] = remap(i, tr.b[k]); }
+      area = new Float64Array(palette.length);
+      for (let i = 0; i < labels.length; i++) if (labels[i] >= 0) area[labels[i]]++;
+    }
+  }
+
+  // unidades de desenho: rótulos soltos ou grupos de gradiente; maiores primeiro (fundo → frente)
+  interface Unit { labels: number[]; area: number; grad?: Gradient }
+  const inGroup = new Set(groupLabels.flat());
+  const units: Unit[] = [];
+  palette.forEach((_, c) => { if (area[c] > 0 && c !== bg && !inGroup.has(c)) units.push({ labels: [c], area: area[c] }); });
+  groupLabels.forEach((ls, gi) => { const a = ls.reduce((s2, l) => s2 + area[l], 0); if (a > 0) units.push({ labels: ls.filter((l) => area[l] > 0), area: a, grad: groupGrad[gi] }); });
+  units.sort((a, b) => b.area - a.area);
   const layers: Layer[] = [];
-  let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0;
+  let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0, gradients = 0;
   const minLoop = Math.max(1, o.speckle / 6);
 
-  order.forEach((c, rank) => {
-    progress(0.25 + (0.7 * rank) / Math.max(1, order.length), `Traçando cor ${rank + 1}/${order.length}`);
+  interface Traced { paths: VPath[]; nodes: number; raw: number; lines: number; arcs: number; ellipses: number; curves: number }
+  const trace = (set: Set<number>): Traced => {
     const mask = new Uint8Array(w * h);
-    const set = o.stacking === 'stacked' ? new Set(order.slice(rank)) : new Set([c]);
     for (let i = 0; i < mask.length; i++) if (set.has(labels[i])) mask[i] = 1;
     // cobertura subpixel dos pixels de transição para as cores desta camada
     const cover = new Map<number, number>();
@@ -129,26 +177,55 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
       const v = (set.has(a) ? 1 - tr.t[k] : 0) + (set.has(b) ? tr.t[k] : 0);
       cover.set(i, v);
     }
-    const layer: Layer = { color: hex(...palette[c]), paths: [] };
     const raw: Pt[][] = [];
     for (const loop of traceField(mask, w, h, o.contourBlur, cover)) {
       if (Math.abs(loopArea(loop)) < minLoop) continue;
       raw.push(loop);
     }
     const hyd = structureHydraulic(raw);
+    const r: Traced = { paths: [], nodes: 0, raw: 0, lines: 0, arcs: 0, ellipses: 0, curves: 0 };
     raw.forEach((loop, k) => {
       const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs, ellipses: o.ellipses, merge: internal.merge, hydraulic: hyd[k] });
-      rawPoints += loop.length;
-      nodes += path.segs.length;
-      for (const sg of path.segs) { if (sg.t === 'L') lines++; else if (sg.t === 'A') arcs++; else if (sg.t === 'E') ellipses++; else curves++; }
-      paths++;
-      layer.paths.push(path);
+      r.raw += loop.length;
+      r.nodes += path.segs.length;
+      for (const sg of path.segs) { if (sg.t === 'L') r.lines++; else if (sg.t === 'A') r.arcs++; else if (sg.t === 'E') r.ellipses++; else r.curves++; }
+      r.paths.push(path);
     });
-    if (layer.paths.length) layers.push(layer);
+    return r;
+  };
+  const commit = (t: Traced) => { nodes += t.nodes; rawPoints += t.raw; lines += t.lines; arcs += t.arcs; ellipses += t.ellipses; curves += t.curves; paths += t.paths.length; };
+  const stacked = o.stacking === 'stacked';
+
+  units.forEach((u, rank) => {
+    progress(0.25 + (0.7 * rank) / Math.max(1, units.length), `Traçando cor ${rank + 1}/${units.length}`);
+    const after = stacked ? units.slice(rank + 1).flatMap((v) => v.labels) : [];
+    if (!u.grad) {
+      const t = trace(new Set([...u.labels, ...after]));
+      const layer: Layer = { color: hex(...palette[u.labels[0]]), paths: t.paths };
+      commit(t);
+      if (layer.paths.length) layers.push(layer);
+      return;
+    }
+    // grupo de gradiente: região única com gradiente × bandas sólidas; a guarda exige não ter mais nós
+    const bandOrder = [...u.labels].sort((a, b) => area[b] - area[a]);
+    const bands = bandOrder.map((l, j) => ({ l, t: trace(new Set(stacked ? [...bandOrder.slice(j), ...after] : [l])) }));
+    const bandLayers: Layer[] = bands.map((b) => ({ color: hex(...palette[b.l]), paths: b.t.paths })).filter((l) => l.paths.length);
+    const gt = trace(new Set([...u.labels, ...after]));
+    const bandNodes = bands.reduce((s2, b) => s2 + b.t.nodes, 0);
+    if (gt.paths.length && gt.nodes <= bandNodes) {
+      let sr = 0, sg = 0, sb = 0, sa = 0;
+      for (const l of u.labels) { sr += palette[l][0] * area[l]; sg += palette[l][1] * area[l]; sb += palette[l][2] * area[l]; sa += area[l]; }
+      layers.push({ color: hex(sr / sa, sg / sa, sb / sa), paths: gt.paths, gradient: u.grad, fallback: bandLayers });
+      commit(gt);
+      gradients++;
+    } else {
+      for (const b of bands) commit(b.t);
+      layers.push(...bandLayers);
+    }
   });
 
   progress(1, 'Pronto');
   let transparent = false;
   for (let i = 0; i < labels.length && !transparent; i++) if (labels[i] < 0) transparent = true;
-  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored, noise: dn.noise.sigma, denoised: dn.applied } };
+  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored, noise: dn.noise.sigma, denoised: dn.applied, gradients } };
 }

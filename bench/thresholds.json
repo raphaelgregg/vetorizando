@@ -19,11 +19,11 @@
       "hd95": 1.5
     },
     "illustration": {
-      "ssim": 0.977,
-      "deltaE": 0.95,
-      "deltaEEdge": 5.34,
-      "deltaEFlat": 0.86,
-      "nodes": 626,
+      "ssim": 0.995,
+      "deltaE": 0.36,
+      "deltaEEdge": 2.42,
+      "deltaEFlat": 0.33,
+      "nodes": 38,
       "hd95": 1.5
     },
     "photo": {
@@ -71,6 +71,14 @@
       "deltaEEdge": 1.39,
       "deltaEFlat": 0.05,
       "nodes": 860,
+      "hd95": 1.5
+    },
+    "gradients": {
+      "ssim": 0.994,
+      "deltaE": 0.45,
+      "deltaEEdge": 2.53,
+      "deltaEFlat": 0.33,
+      "nodes": 459,
       "hd95": 1.5
     }
   }

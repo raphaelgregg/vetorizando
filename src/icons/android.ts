@@ -1,3 +1,4 @@
+import { flattenGradients } from '../engine/gradient';
 import { pathData } from '../engine/svg';
 import { suggestCurrentColor } from '../engine/palette';
 import type { Options, VDoc } from '../engine/types';
@@ -34,6 +35,7 @@ export interface VectorOptions {
  * Com `colors.mode = 'currentColor'` o desenho usa `android:tint="?attr/colorControlNormal"` (herda a cor do tema).
  */
 export function vectorDrawable(doc: VDoc, o: Options, v: VectorOptions): string {
+  doc = flattenGradients(doc); // Vector Drawable: bandas sólidas (gradientes não são emitidos)
   const { fill, gap } = paintMode(o);
   const k = v.box ? Math.min(v.box / doc.width, v.box / doc.height) : Math.min(v.viewport / doc.width, v.viewport / doc.height);
   const tx = (v.viewport - doc.width * k) / 2, ty = (v.viewport - doc.height * k) / 2;

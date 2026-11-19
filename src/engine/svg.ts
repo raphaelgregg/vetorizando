@@ -1,6 +1,7 @@
 import { groupLayers, paintMode } from '../export/groups';
+import { flattenGradients } from './gradient';
 import { suggestCurrentColor } from './palette';
-import type { Options, Pt, VDoc, VPath } from './types';
+import type { Gradient, Layer, Options, Pt, VDoc, VPath } from './types';
 
 const num = (n: number) => String(Math.round(n * 100) / 100);
 const pt = (p: Pt) => `${num(p.x)} ${num(p.y)}`;
@@ -32,6 +33,8 @@ export interface SvgColors {
   mode: 'hex' | 'currentColor' | 'classes';
   /** cor (hex) que vira `currentColor`; omitida = a mais representativa do documento */
   currentColor?: string;
+  /** `false` = camadas com gradiente viram bandas de cor sólida (padrão: usar `<linearGradient>`/`<radialGradient>`) */
+  gradients?: boolean;
 }
 
 export const HEX_COLORS: SvgColors = { mode: 'hex' };
@@ -47,7 +50,19 @@ function colorAttrs(colors: SvgColors, doc: VDoc, cc: string | undefined) {
 }
 
 /** Elementos internos do SVG (sem a tag `<svg>`): usados por `toSVG` e pela composição de ícones. */
+const f4 = (n: number) => String(Math.round(n * 10000) / 10000);
+
+function gradientDef(g: Gradient, id: string): string {
+  const stops = g.stops.map((s) => `<stop offset="${f4(s.offset)}" stop-color="${s.color}"/>`).join('');
+  return g.kind === 'linear'
+    ? `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(g.x1)}" y1="${num(g.y1)}" x2="${num(g.x2)}" y2="${num(g.y2)}">${stops}</linearGradient>`
+    : `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(g.cx)}" cy="${num(g.cy)}" r="${num(g.r)}">${stops}</radialGradient>`;
+}
+
 export function svgBody(doc: VDoc, o: Options, colors: SvgColors = HEX_COLORS): string[] {
+  if (colors.gradients === false) doc = flattenGradients(doc);
+  const gradIds = new Map<Layer, string>();
+  doc.layers.forEach((l) => { if (l.gradient) gradIds.set(l, `g${gradIds.size}`); });
   const { fill, gap } = paintMode(o);
   const layered = o.groupBy === 'layer';
   const cc = colors.mode === 'currentColor' ? colors.currentColor ?? suggestCurrentColor(doc) : undefined;
@@ -57,6 +72,7 @@ export function svgBody(doc: VDoc, o: Options, colors: SvgColors = HEX_COLORS): 
     const order = [...new Set(doc.layers.map((l) => l.color))];
     parts.push(`<style>${order.map((c, i) => `.c${i}{fill:${c}}.s${i}{stroke:${c}}`).join('')}</style>`);
   }
+  if (gradIds.size) parts.push(`<defs>${[...gradIds].map(([l, id]) => gradientDef(l.gradient!, id)).join('')}</defs>`);
   const dOf = new Map(doc.layers.map((l) => [l, l.paths.map(pathData).join('')]));
   if (gap) {
     const clip = doc.openBoundary;
@@ -65,7 +81,7 @@ export function svgBody(doc: VDoc, o: Options, colors: SvgColors = HEX_COLORS): 
     parts.push(`<g ${attrs}>`);
     for (const layer of doc.layers) {
       const d = layer.paths.filter((p) => !p.thin).map(pathData).join('');
-      if (d) parts.push(`<path ${attr(layer.color, 'stroke')} d="${d}"/>`);
+      if (d) parts.push(`<path ${gradIds.has(layer) ? `stroke="url(#${gradIds.get(layer)})"` : attr(layer.color, 'stroke')} d="${d}"/>`);
     }
     parts.push('</g>');
   }
@@ -75,7 +91,7 @@ export function svgBody(doc: VDoc, o: Options, colors: SvgColors = HEX_COLORS): 
       parts.push(layered ? `<g id="${id}" inkscape:groupmode="layer" inkscape:label="${g.name}">` : `<g id="${id}">`);
     }
     for (const layer of g.layers) {
-      const attrs = fill ? `${attr(layer.color, 'fill')} fill-rule="nonzero"` : `fill="none" ${attr(layer.color, 'stroke')} stroke-width="1" vector-effect="non-scaling-stroke"`;
+      const attrs = fill ? `${gradIds.has(layer) ? `fill="url(#${gradIds.get(layer)})"` : attr(layer.color, 'fill')} fill-rule="nonzero"` : `fill="none" ${attr(layer.color, 'stroke')} stroke-width="1" vector-effect="non-scaling-stroke"`;
       parts.push(`<path ${attrs} d="${dOf.get(layer)}"/>`);
     }
     if (g.name) parts.push('</g>');

@@ -20,6 +20,7 @@ export interface PaletteEntry {
   paths: number;
   nodes: number;
   area: number; // px² no espaço do documento
+  gradient: boolean; // a camada é preenchida com gradiente (editar a cor a torna sólida)
 }
 
 /** `#abc`, `abc`, `#AABBCC` → `#aabbcc`; inválido → null */
@@ -64,6 +65,7 @@ export function paletteEntries(base: VDoc, edits: PaletteEdits = {}): PaletteEnt
       paths: l.paths.length,
       nodes: l.paths.reduce((n, p) => n + p.segs.length, 0),
       area: layerArea(l),
+      gradient: !!l.gradient && !(e?.color !== undefined && e.color !== l.color),
     };
   });
 }
@@ -74,7 +76,7 @@ function recount(doc: VDoc): VDoc['stats'] {
     paths++;
     for (const s of p.segs as Seg[]) { nodes++; if (s.t === 'L') lines++; else if (s.t === 'A') arcs++; else if (s.t === 'E') ellipses++; else curves++; }
   }
-  return { ...doc.stats, nodes, paths, colors: doc.layers.length, lines, arcs, ellipses, curves };
+  return { ...doc.stats, gradients: doc.layers.filter((l) => l.gradient).length, nodes, paths, colors: doc.layers.length, lines, arcs, ellipses, curves };
 }
 
 /**
@@ -89,12 +91,16 @@ export function applyPaletteEdits(base: VDoc, edits: PaletteEdits = {}): VDoc {
   for (const l of base.layers) {
     const e = edits[l.color];
     if (e?.hidden) { hidden = true; continue; }
-    kept.push({ color: normalizeHex(e?.color ?? l.color) ?? l.color, paths: l.paths });
+    const color = normalizeHex(e?.color ?? l.color) ?? l.color;
+    // gradiente: só some ao receber uma cor nova (vira sólido); sem edição de cor, é preservado
+    if (l.gradient && !(e?.color !== undefined && e.color !== l.color)) kept.push({ ...l });
+    else kept.push({ color, paths: l.paths });
   }
   let layers = kept;
   if (base.stacking === 'cutouts') {
     const by = new Map<string, Layer>();
     for (const l of kept) {
+      if (l.gradient) { by.set(`${l.color}#g${by.size}`, l); continue; }
       const ex = by.get(l.color);
       if (ex) ex.paths = [...ex.paths, ...l.paths]; else by.set(l.color, { color: l.color, paths: [...l.paths] });
     }
@@ -143,7 +149,8 @@ export function mergeColors(base: VDoc, edits: PaletteEdits, originals: string[]
  * área. Considera só camadas visíveis. Devolve as edições novas e quantas camadas foram mescladas.
  */
 export function mergeSimilar(base: VDoc, edits: PaletteEdits, threshold: number): { edits: PaletteEdits; merged: number } {
-  const entries = paletteEntries(base, edits).filter((e) => !e.hidden);
+  const gradColors = new Set(base.layers.filter((l) => l.gradient).map((l) => l.color));
+  const entries = paletteEntries(base, edits).filter((e) => !e.hidden && !gradColors.has(e.original));
   const parent = entries.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (let i = 0; i < entries.length; i++) for (let j = i + 1; j < entries.length; j++) if (deltaE(entries[i].color, entries[j].color) <= threshold) parent[find(j)] = find(i);
