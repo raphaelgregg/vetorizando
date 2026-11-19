@@ -145,3 +145,39 @@ Cada fase termina com commit(s) pequenos, testes passando e critérios de aceite
 
 ## Licença
 A definir (ver pontos em aberto).
+
+---
+
+## 6. Referência: análise do HAR (simulação de vetorização no Vectorizer.AI)
+
+Fonte: captura de rede (`pt.vectorizer.ai`, 27 requisições) de uma sessão de vetorização que terminou em download.
+
+**O que o HAR contém e o que não contém**
+- O único passo de vetorização capturado é o `POST .../images/<id>/download`, que respondeu **303 → `/pricing`** (download bloqueado por plano pago). Não há SVG de saída, nem o stream de geometria do preview (protocolo binário `application/x-vk-foreground-stream`, com frames de progresso/revisão/geometria/erro).
+- Em compensação, há o **formulário completo de opções de saída** e o JS da interface, que mostram o modelo de parâmetros e o fluxo de UX. Usamos isso só como referência funcional; **código e layout deles não serão copiados**.
+
+**Modelo de parâmetros observado (base do nosso `OutputOptions`)**
+
+| Grupo | Parâmetros / valores observados |
+|---|---|
+| Formato | `file_format` (svg; pdf/eps/dxf/png existem na UI), `svg.version` (`svg_1_1`), `svg.adobe_compatibility_mode`, `pdf.version` (`PDF_1_4`), `eps.version` (`PS_3_0_EPSF_3_0`), `dxf.compatibility_level` (`lines_and_arcs`) |
+| Presets | `ui.preset`: `general` (fill, cutouts, group none, gap filler on), `editing` (fill, **stacked**, group **color**, gap filler off), `cutting` (**stroke_edges**, cutouts, group none, gap filler off) |
+| Estilo | `draw_style`: `fill_shapes` \| `stroke_shapes` (contornos) \| `stroke_edges` (arestas, p/ corte) |
+| Empilhamento | `shape_stacking`: `cutouts` \| `stacked` |
+| Agrupamento | `group_by`: `none` \| `color` \| `layer` \| `parent` (hierarquia) |
+| Curvas | `curves.allowed.{quadratic_bezier,cubic_bezier,circular_arc,elliptical_arc}` (cada tipo liga/desliga), `curves.line_fit_tolerance` (padrão **0.1**), `parameterized_shapes.flatten` (formas nativas vs. achatadas em paths) |
+| Gap filler | `gap_filler.enabled`, `.clip`, `.non_scaling_stroke`, `.stroke_width` (padrão 2.0) — implementado como **traço** sob as formas, não dilatação |
+| Traços | `strokes.stroke_width` (1.0), `.non_scaling_stroke`, `.use_override_color`/`.override_color` (`#000000`) |
+| Tamanho | `size.mode` (`automatic`\|`scale`\|`width`\|`height`\|`fit_inside`\|`fill_box`\|`stretch`), `size.unit` (`px`…), `size.output_dpi`, `size.aspect_ratio` (`preserve_inset`\|`preserve_overflow`\|`stretch`), `size.align_x/y` (0.5) |
+
+**Decisões que isso muda no plano**
+1. **Estilos de desenho** — adicionar `stroke_shapes` e `stroke_edges` (corte CNC/laser usa arestas, não preenchimento); incluir em `OutputOptions` e no preset *Corte CNC/Laser*.
+2. **Gap filler por traço** (`stroke_width`, `non_scaling_stroke`) como implementação padrão no SVG; dilatação geométrica fica para PDF/EPS/DXF, onde traço não escala como no SVG.
+3. **Agrupamento** ganha `parent` (hierarquia) além de `color`/`layer`/`none`.
+4. **Tipos de curva ligáveis individualmente** (inclusive arco elíptico) e opção de **formas nativas vs. achatadas** — importante para compatibilidade com editores/CAD.
+5. **Fluxo de UX validado:** o preview é gerado por *streaming progressivo* (progresso → geometria por revisão) e o formulário de download é separado do preview; nosso estúdio fará o mesmo, com render incremental vindo do Worker.
+6. **Entrada:** a UI deles trata arrastar, selecionar, **colar (`Ctrl+V`)** e **URL** como métodos de entrada; adicionaremos "colar URL de imagem" ao Passo 1.
+7. **Paywall:** o bloqueio no download é decisão de negócio deles; no Vetorizando o download é local e gratuito (a definir).
+8. **Resumo do estado** em chips (ex.: "Draw: Filled", "Stack: Cut-outs", "Group by: None", "Size: Unchanged") — bom padrão de UX para o painel avançado recolhido; adotaremos algo equivalente.
+
+**Limite da referência:** sem o SVG resultante, não dá para comparar qualidade geométrica a partir deste arquivo. Para calibrar o benchmark (seção 2.4) preciso de pares *imagem original → SVG baixado* (idealmente exportados por você).
