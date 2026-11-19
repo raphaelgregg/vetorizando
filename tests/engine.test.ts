@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { vectorize } from '../src/engine/vectorize';
+import { flattenPath } from '../src/engine/geom';
 import { toSVG } from '../src/engine/svg';
 import { DEFAULT_OPTIONS, Options, RawImage } from '../src/engine/types';
 
@@ -16,19 +17,8 @@ const opts = (p: Partial<Options> = {}): Options => ({ ...DEFAULT_OPTIONS, maxCo
 function bbox(doc: ReturnType<typeof vectorize>, color: string) {
   const l = doc.layers.find((x) => x.color === color)!;
   let minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9;
-  const see = (x: number, y: number) => { minx = Math.min(minx, x); miny = Math.min(miny, y); maxx = Math.max(maxx, x); maxy = Math.max(maxy, y); };
-  for (const p of l.paths) {
-    let cur = p.start;
-    see(cur.x, cur.y);
-    for (const s of p.segs) {
-      if (s.t === 'L') see(s.p.x, s.p.y);
-      else for (let i = 1; i <= 50; i++) { // amostra a curva
-        const t = i / 50, m = 1 - t;
-        see(m ** 3 * cur.x + 3 * m * m * t * s.c1.x + 3 * m * t * t * s.c2.x + t ** 3 * s.p.x,
-            m ** 3 * cur.y + 3 * m * m * t * s.c1.y + 3 * m * t * t * s.c2.y + t ** 3 * s.p.y);
-      }
-      cur = s.p;
-    }
+  for (const p of l.paths) for (const q of flattenPath(p, 0.02)) {
+    minx = Math.min(minx, q.x); miny = Math.min(miny, q.y); maxx = Math.max(maxx, q.x); maxy = Math.max(maxy, q.y);
   }
   return { minx, miny, maxx, maxy };
 }
@@ -40,7 +30,7 @@ describe('vectorize', () => {
     expect(doc.layers.length).toBe(2);
     const red = doc.layers.find((l) => l.color.startsWith('#dc'))!;
     const nodes = red.paths.reduce((a, p) => a + p.segs.length, 0);
-    expect(nodes).toBeLessThanOrEqual(16);
+    expect(nodes).toBeLessThanOrEqual(6);
     const b = bbox(doc, red.color);
     expect(Math.abs(b.minx - 20)).toBeLessThan(1.5);
     expect(Math.abs(b.maxx - 80)).toBeLessThan(1.5);

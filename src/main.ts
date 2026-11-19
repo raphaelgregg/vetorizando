@@ -120,8 +120,11 @@ async function process() {
 
 function renderStats() {
   const d = state.doc!;
-  $('stats').innerHTML = [['nós', d.stats.nodes], ['caminhos', d.stats.paths], ['cores', d.stats.colors]]
-    .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('');
+  const st = d.stats;
+  const red = st.rawPoints ? Math.round((1 - st.nodes / st.rawPoints) * 100) : 0;
+  $('stats').innerHTML = [['nós', st.nodes], ['retas', st.lines], ['arcos', st.arcs], ['curvas', st.curves], ['caminhos', st.paths], ['cores', st.colors]]
+    .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('')
+    + `<span class="chip" title="Pontos de contorno antes do ajuste → nós finais">${st.rawPoints} pts → <b>${st.nodes}</b> nós (−${red}%)</span>`;
   const o = state.options;
   $('summary').textContent = `${o.drawStyle === 'fill' ? 'Preenchido' : 'Contornos'} · ${o.stacking === 'stacked' ? 'Empilhado' : 'Recortes'} · Agrupar: ${o.groupBy === 'color' ? 'cor' : 'nenhum'} · Fenda: ${o.gapFiller && o.stacking === 'cutouts' && o.drawStyle === 'fill' ? 'ligado' : 'desligado'}`;
 }
@@ -152,14 +155,15 @@ function renderPresets() {
   }));
 }
 
-type NumKey = 'maxColors' | 'mergeDeltaE' | 'speckle' | 'lineFitTolerance' | 'cornerThreshold' | 'smooth' | 'gapStrokeWidth';
+type NumKey = 'maxColors' | 'edgeDelta' | 'mergeDeltaE' | 'speckle' | 'lineFitTolerance' | 'cornerThreshold' | 'smooth' | 'gapStrokeWidth';
 const RANGES: [NumKey, string, number, number, number][] = [
   ['maxColors', 'Máximo de cores', 2, 64, 1],
   ['mergeDeltaE', 'Mesclar tons próximos (ΔE)', 0, 25, 1],
   ['speckle', 'Remover manchas (px²)', 0, 100, 1],
   ['lineFitTolerance', 'Tolerância de ajuste (px)', 0.1, 3, 0.1],
   ['cornerThreshold', 'Ângulo de canto (°)', 20, 120, 5],
-  ['smooth', 'Suavizar degraus (px)', 0, 6, 1],
+  ['smooth', 'Suavizar ruído do contorno (px)', 0, 10, 1],
+  ['edgeDelta', 'Limpeza de bordas / anti-aliasing (ΔE)', 0, 20, 1],
   ['gapStrokeWidth', 'Largura do preenchimento de fendas', 0, 3, 0.1],
 ];
 const SELECTS: [keyof Options, string, [string, string][]][] = [
@@ -167,7 +171,7 @@ const SELECTS: [keyof Options, string, [string, string][]][] = [
   ['drawStyle', 'Estilo de desenho', [['fill', 'Preenchido'], ['outline', 'Contornos']]],
   ['groupBy', 'Agrupar por', [['none', 'Sem agrupamento'], ['color', 'Cor']]],
 ];
-const CHECKS: [keyof Options, string][] = [['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
+const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
 
 function renderAdvanced() {
   const box = $('adv');

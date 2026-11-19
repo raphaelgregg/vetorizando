@@ -82,51 +82,11 @@ function maxErr(b: Bez, pts: Pt[], u: number[]): { err: number; at: number } {
   return { err, at };
 }
 
-/** Ajuste de Bézier cúbica por mínimos quadrados (Schneider) com divisão recursiva. */
-function fitCubic(pts: Pt[], t1: Pt, t2: Pt, tol: number, out: Seg[], depth = 0): void {
-  const p0 = pts[0], p3 = pts[pts.length - 1];
-  if (pts.length === 2) {
-    const d = len(sub(p3, p0)) / 3;
-    out.push({ t: 'C', c1: add(p0, mul(t1, d)), c2: add(p3, mul(t2, d)), p: p3 });
-    return;
-  }
-  let u = chordParam(pts);
-  let b = generate(pts, u, t1, t2);
-  let { err, at } = maxErr(b, pts, u);
-  const tol2 = tol * tol;
-  if (err < tol2) { out.push({ t: 'C', c1: b[1], c2: b[2], p: p3 }); return; }
-  if (err < tol2 * 16) {
-    for (let i = 0; i < 4; i++) {
-      u = reparam(b, pts, u);
-      b = generate(pts, u, t1, t2);
-      ({ err, at } = maxErr(b, pts, u));
-      if (err < tol2) { out.push({ t: 'C', c1: b[1], c2: b[2], p: p3 }); return; }
-    }
-  }
-  if (depth > 24 || pts.length < 4) { out.push({ t: 'C', c1: b[1], c2: b[2], p: p3 }); return; }
-  at = Math.min(Math.max(at, 1), pts.length - 2);
-  const tc = norm(sub(pts[at - 1], pts[at + 1]));
-  fitCubic(pts.slice(0, at + 1), t1, tc, tol, out, depth + 1);
-  fitCubic(pts.slice(at), mul(tc, -1), t2, tol, out, depth + 1);
-}
-
-function maxLineDist(pts: Pt[]): number {
-  const a = pts[0], b = pts[pts.length - 1];
-  const d = sub(b, a), l = len(d);
-  let m = 0;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const v = sub(pts[i], a);
-    const dist = l < 1e-9 ? len(v) : Math.abs(v.x * d.y - v.y * d.x) / l;
-    if (dist > m) m = dist;
-  }
-  return m;
-}
-
-function detectCorners(p: Pt[], thresholdDeg: number, k: number): number[] {
+function detectCorners(p: Pt[], thresholdDeg: number, k: number): { corners: number[]; ang: Float64Array } {
   const n = p.length;
   const kk = Math.min(k, Math.floor(n / 4));
-  if (kk < 1) return [];
   const ang = new Float64Array(n);
+  if (kk < 1) return { corners: [], ang };
   for (let i = 0; i < n; i++) {
     const a = sub(p[i], p[(i - kk + n) % n]);
     const b = sub(p[(i + kk) % n], p[i]);
@@ -142,7 +102,7 @@ function detectCorners(p: Pt[], thresholdDeg: number, k: number): number[] {
     }
     if (peak) corners.push(i);
   }
-  return corners;
+  return { corners, ang };
 }
 
 function smoothPoints(p: Pt[], corners: number[], radius: number): Pt[] {
@@ -164,55 +124,182 @@ function smoothPoints(p: Pt[], corners: number[], radius: number): Pt[] {
       }
     }
   }
-  const res: Pt[] = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const r = Math.min(radius, dist[i] - 1);
-    if (isCorner[i] || r < 1) { res[i] = p[i]; continue; }
-    let sx = 0, sy = 0;
-    for (let j = -r; j <= r; j++) {
-      const q = p[(i + j + n) % n];
-      sx += q.x; sy += q.y;
+  // duas passagens de média móvel (≈ triangular), sem atravessar cantos
+  let cur = p;
+  const r0 = Math.max(1, Math.round(radius * 0.7));
+  for (let pass = 0; pass < 2; pass++) {
+    const res: Pt[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const r = Math.min(r0, dist[i] - 1);
+      if (isCorner[i] || r < 1) { res[i] = cur[i]; continue; }
+      let sx = 0, sy = 0;
+      for (let j = -r; j <= r; j++) {
+        const q = cur[(i + j + n) % n];
+        sx += q.x; sy += q.y;
+      }
+      const c = 2 * r + 1;
+      res[i] = { x: sx / c, y: sy / c };
     }
-    const c = 2 * r + 1;
-    res[i] = { x: sx / c, y: sy / c };
+    cur = res;
   }
-  return res;
+  return cur;
 }
 
-function segmentPath(pts: Pt[], tol: number, out: Seg[]): void {
-  if (pts.length < 2) return;
-  if (pts.length === 2 || maxLineDist(pts) <= tol) {
-    out.push({ t: 'L', p: pts[pts.length - 1] });
-    return;
+function lineOk(P: Pt[], s: number, e: number, tol: number): boolean {
+  const a = P[s], b = P[e];
+  const d = sub(b, a), l2 = dot(d, d);
+  for (let i = s + 1; i < e; i++) {
+    const v = sub(P[i], a);
+    const t = l2 < 1e-12 ? 0 : Math.min(1, Math.max(0, dot(v, d) / l2));
+    if (Math.hypot(v.x - d.x * t, v.y - d.y * t) > tol) return false;
   }
-  const k = Math.min(4, pts.length - 1);
-  const t1 = norm(sub(pts[k], pts[0]));
-  const t2 = norm(sub(pts[pts.length - 1 - k], pts[pts.length - 1]));
-  fitCubic(pts, t1, t2, tol, out);
+  return true;
+}
+
+interface ArcFit { seg: Seg; tOut: Pt }
+
+/** Arco circular ligando P[s]→P[e] (extremos exatos), validado contra todos os pontos. */
+function arcFit(P: Pt[], s: number, e: number, tol: number): ArcFit | null {
+  const n = e - s + 1;
+  if (n < 4) return null;
+  let mx = 0, my = 0;
+  for (let i = s; i <= e; i++) { mx += P[i].x; my += P[i].y; }
+  mx /= n; my /= n;
+  let suu = 0, suv = 0, svv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+  for (let i = s; i <= e; i++) {
+    const u = P[i].x - mx, v = P[i].y - my;
+    suu += u * u; suv += u * v; svv += v * v; suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+  }
+  const det = suu * svv - suv * suv;
+  if (Math.abs(det) < 1e-9) return null;
+  const r1 = 0.5 * (suuu + suvv), r2 = 0.5 * (svvv + svuu);
+  const uc = (r1 * svv - r2 * suv) / det, vc = (r2 * suu - r1 * suv) / det;
+  const fx = mx + uc, fy = my + vc;
+  let r = Math.sqrt(uc * uc + vc * vc + (suu + svv) / n);
+  if (!isFinite(r) || r > 1e5) return null;
+  const A = P[s], B = P[e];
+  const c = len(sub(B, A));
+  if (c < 1e-9) return null;
+  if (r < c / 2) r = c / 2;
+  const h = Math.sqrt(Math.max(0, r * r - (c * c) / 4));
+  const mid = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+  const nrm = { x: -(B.y - A.y) / c, y: (B.x - A.x) / c };
+  const c1 = { x: mid.x + nrm.x * h, y: mid.y + nrm.y * h }, c2 = { x: mid.x - nrm.x * h, y: mid.y - nrm.y * h };
+  const C = Math.hypot(c1.x - fx, c1.y - fy) <= Math.hypot(c2.x - fx, c2.y - fy) ? c1 : c2;
+  let total = 0, prev = Math.atan2(A.y - C.y, A.x - C.x), sign = 0;
+  for (let i = s; i <= e; i++) {
+    if (Math.abs(Math.hypot(P[i].x - C.x, P[i].y - C.y) - r) > tol) return null;
+    if (i === s) continue;
+    const a = Math.atan2(P[i].y - C.y, P[i].x - C.x);
+    let d = a - prev;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d <= -Math.PI) d += 2 * Math.PI;
+    if (Math.abs(d) > 1e-9) {
+      if (sign === 0) sign = Math.sign(d);
+      else if (Math.sign(d) !== sign) return null; // não monotônico
+    }
+    total += d;
+    prev = a;
+  }
+  const span = Math.abs(total);
+  if (span < 0.05 || span > 5.6) return null;
+  const sweep: 0 | 1 = total > 0 ? 1 : 0;
+  const rad = norm(sub(B, C));
+  const tOut = sweep ? { x: -rad.y, y: rad.x } : { x: rad.y, y: -rad.x };
+  return { seg: { t: 'A', r, large: span > Math.PI ? 1 : 0, sweep, p: B }, tOut };
+}
+
+function cubicFit(P: Pt[], s: number, e: number, t1: Pt, t2: Pt, tol: number): Bez | null {
+  const pts = P.slice(s, e + 1);
+  if (pts.length < 3) return null;
+  let u = chordParam(pts);
+  let b = generate(pts, u, t1, t2);
+  let { err } = maxErr(b, pts, u);
+  const tol2 = tol * tol;
+  for (let i = 0; i < 4 && err >= tol2; i++) {
+    u = reparam(b, pts, u);
+    b = generate(pts, u, t1, t2);
+    ({ err } = maxErr(b, pts, u));
+  }
+  return err < tol2 ? b : null;
+}
+
+/** Maior e em [minE, maxE] com ok(e) (galope + busca binária); -1 se ok(minE) falha. */
+function extent(ok: (e: number) => boolean, minE: number, maxE: number): number {
+  if (minE > maxE || !ok(minE)) return -1;
+  let lo = minE, hi = minE, step = 2;
+  while (hi < maxE) {
+    const nx = Math.min(maxE, hi + step);
+    if (ok(nx)) { lo = nx; hi = nx; step *= 2; } else { hi = nx; break; }
+  }
+  if (lo >= maxE || hi === lo) return lo;
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (ok(m)) lo = m; else hi = m;
+  }
+  return lo;
+}
+
+/**
+ * Cobre a sequência de pontos com o MENOR número de primitivas: a cada passo estende
+ * o trecho o máximo possível com reta, arco ou Bézier cúbica (continuidade G1 entre elas).
+ */
+function fitRun(P: Pt[], tStart: Pt, tEnd: Pt, tol: number, arcs: boolean): Seg[] {
+  const m = P.length;
+  const out: Seg[] = [];
+  const tAt = (k: number) => (k >= m - 1 ? tEnd : norm(sub(P[Math.min(k + 2, m - 1)], P[Math.max(k - 2, 0)])));
+  let s = 0, tIn = tStart;
+  while (s < m - 1) {
+    const last = m - 1;
+    let kind: 'L' | 'A' | 'C' = 'L';
+    let e = extent((x) => lineOk(P, s, x, tol), s + 1, last);
+    if (e < last && arcs) {
+      const ea = extent((x) => arcFit(P, s, x, tol) !== null, s + 3, last);
+      if (ea > e + 1) { e = ea; kind = 'A'; }
+    }
+    if (e < last) {
+      const ec = extent((x) => cubicFit(P, s, x, tIn, mul(tAt(x), -1), tol) !== null, s + 2, last);
+      if (ec > e + 2) { e = ec; kind = 'C'; }
+    }
+    if (kind === 'A') {
+      const f = arcFit(P, s, e, tol)!;
+      out.push(f.seg); tIn = f.tOut;
+    } else if (kind === 'C') {
+      const b = cubicFit(P, s, e, tIn, mul(tAt(e), -1), tol)!;
+      out.push({ t: 'C', c1: b[1], c2: b[2], p: b[3] });
+      tIn = norm(sub(b[3], b[2]));
+    } else {
+      out.push({ t: 'L', p: P[e] });
+      tIn = norm(sub(P[e], P[s]));
+    }
+    s = e;
+  }
+  return out;
 }
 
 export interface FitOptions {
   tolerance: number;
   cornerThreshold: number;
   smooth: number;
+  arcs: boolean;
 }
 
-/** Converte um contorno denso (vértices de grade) em caminho com retas e Béziers cúbicas. */
+/** Converte um contorno denso em caminho com retas, arcos e Béziers cúbicas. */
 export function fitLoop(loop: Pt[], o: FitOptions): VPath {
-  // remove vértices repetidos consecutivos
   const p = loop.filter((q, i) => i === 0 || q.x !== loop[i - 1].x || q.y !== loop[i - 1].y);
+  if (p.length > 1 && p[0].x === p[p.length - 1].x && p[0].y === p[p.length - 1].y) p.pop();
   const n = p.length;
-  if (n < 4) return { start: p[0], segs: p.slice(1).map((q) => ({ t: 'L', p: q })) };
-  const corners = detectCorners(p, o.cornerThreshold, 4);
+  if (n < 4) return { start: p[0], segs: p.slice(1).map((q) => ({ t: 'L' as const, p: q })) };
+  const { corners, ang } = detectCorners(p, o.cornerThreshold, 4);
   const s = smoothPoints(p, corners, Math.round(o.smooth));
-  const segs: Seg[] = [];
   if (corners.length === 0) {
-    const pts = [...s, s[0]];
-    const t1 = norm(sub(s[1], s[n - 1]));
-    const tol = o.tolerance;
-    fitCubic(pts, t1, mul(t1, -1), tol, segs);
-    return { start: s[0], segs };
+    let a0 = 0;
+    for (let i = 1; i < n; i++) if (ang[i] > ang[a0]) a0 = i;
+    const r = [...s.slice(a0), ...s.slice(0, a0)];
+    const t = norm(sub(r[2 % n], r[n - 2]));
+    return { start: r[0], segs: fitRun([...r, r[0]], t, t, o.tolerance, o.arcs) };
   }
+  const segs: Seg[] = [];
   for (let c = 0; c < corners.length; c++) {
     const a = corners[c], b = corners[(c + 1) % corners.length];
     const part: Pt[] = [];
@@ -221,7 +308,10 @@ export function fitLoop(loop: Pt[], o: FitOptions): VPath {
       if (i === b && part.length > 1) break;
       if (part.length > n + 1) break;
     }
-    segmentPath(part, o.tolerance, segs);
+    const m = part.length;
+    const t1 = norm(sub(part[Math.min(3, m - 1)], part[0]));
+    const t2 = norm(sub(part[m - 1], part[Math.max(m - 4, 0)]));
+    segs.push(...fitRun(part, t1, t2, o.tolerance, o.arcs));
   }
   return { start: s[corners[0]], segs };
 }

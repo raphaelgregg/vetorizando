@@ -5,7 +5,11 @@ const pt = (p: Pt) => `${num(p.x)} ${num(p.y)}`;
 
 export function pathData(p: VPath): string {
   let d = `M${pt(p.start)}`;
-  for (const s of p.segs) d += s.t === 'L' ? `L${pt(s.p)}` : `C${pt(s.c1)} ${pt(s.c2)} ${pt(s.p)}`;
+  for (const s of p.segs) {
+    if (s.t === 'L') d += `L${pt(s.p)}`;
+    else if (s.t === 'A') d += `A${num(s.r)} ${num(s.r)} 0 ${s.large} ${s.sweep} ${pt(s.p)}`;
+    else d += `C${pt(s.c1)} ${pt(s.c2)} ${pt(s.p)}`;
+  }
   return d + 'Z';
 }
 
