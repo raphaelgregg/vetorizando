@@ -60,6 +60,8 @@ npm run bench -- --no-builtin --calibrate --write   # grava em bench/thresholds.
 ```bash
 npm run bench:stress                    # logo, ícone, lineart, texto, ilustração × JPEG 95/85/70/50, ruído σ4/σ10, suavização
 npm run bench:stress -- --cases logo    # só um caso
+npm run bench:stress -- --ab            # A/B: pré-filtro de ruído desligado × ligado, métricas contra a verdade limpa
+npm run bench:stress -- --degs jpeg50,ruido10 --cases icon
 ```
 
 Degrada os casos embutidos como imagens de produção e mede **contra a entrada** (o que o usuário enviou) **e contra a verdade limpa**,

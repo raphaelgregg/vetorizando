@@ -42,6 +42,8 @@ export interface VDoc {
     ellipses: number;
     curves: number;
     recolored: number; // pixels de transição (anti-aliasing) corrigidos
+    noise: number; // nível de ruído/artefatos estimado (0 = imagem limpa)
+    denoised: boolean; // o pré-filtro foi aplicado
   };
 }
 
@@ -70,6 +72,7 @@ export interface Options {
   removeBackground: boolean;
   edgeDelta: number; // limpeza de anti-aliasing (ΔE); 0 = desligado
   contourBlur: number; // sigma da suavização subpixel do contorno
+  denoise: number; // pré-filtro de ruído/JPEG: 0 = desligado, 1 = automático (só age com evidência), >1 = mais forte
   arcs: boolean; // permitir arcos circulares
   ellipses: boolean; // permitir arcos elípticos
 }
@@ -89,6 +92,7 @@ export const DEFAULT_OPTIONS: Options = {
   removeBackground: false,
   edgeDelta: 8,
   contourBlur: 0,
+  denoise: 1,
   arcs: true,
   ellipses: true,
 };

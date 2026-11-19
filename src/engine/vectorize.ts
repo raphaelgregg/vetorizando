@@ -1,5 +1,6 @@
 import { hex, rgbToLab } from './color';
 import { loopArea, traceField } from './contour';
+import { denoise } from './denoise';
 import { resolveTransitions } from './edges';
 import { fitLoop } from './fit';
 import { quantize } from './quantize';
@@ -53,6 +54,10 @@ function structureHydraulic(raw: Pt[][]): number[] {
 export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () => {}, internal: { merge?: boolean } = {}): VDoc {
   const t0 = performance.now();
   const { width: w, height: h } = img;
+  progress(0.01, 'Analisando ruído');
+  const original = img; // pixels originais (a cor final da paleta sai deles)
+  const dn = denoise(img, o.denoise);
+  img = dn.image; // filtrado (ou o mesmo objeto, se a imagem é limpa)
   progress(0.02, 'Quantizando cores');
   const { labels, palette } = quantize(img, o.maxColors, o.mergeDeltaE);
   progress(0.12, 'Corrigindo bordas');
@@ -68,6 +73,24 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
       if (l >= 0 && !skip[i]) { acc[l][0] += img.data[i * 4]; acc[l][1] += img.data[i * 4 + 1]; acc[l][2] += img.data[i * 4 + 2]; acc[l][3]++; }
     }
     acc.forEach((a, c) => { if (a[3]) palette[c] = [a[0] / a[3], a[1] / a[3], a[2] / a[3]]; });
+  }
+  if (dn.applied) {
+    // ruído é cortado em 0/255: a MÉDIA do cluster fica enviesada (branco → ~251); a MEDIANA por canal dos pixels
+    // ORIGINAIS recupera a cor verdadeira. Só com ruído detectado: em imagens limpas a paleta não muda.
+    const skip = new Uint8Array(labels.length);
+    for (const i of tr.idx) skip[i] = 1;
+    const hist = new Uint32Array(palette.length * 3 * 256), cnt = new Uint32Array(palette.length);
+    for (let i = 0; i < labels.length; i++) {
+      const l = labels[i];
+      if (l < 0 || skip[i]) continue;
+      cnt[l]++;
+      for (let c = 0; c < 3; c++) hist[(l * 3 + c) * 256 + original.data[i * 4 + c]]++;
+    }
+    palette.forEach((_, l) => {
+      if (!cnt[l]) return;
+      const m = [0, 1, 2].map((c) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[(l * 3 + c) * 256 + v]; if (acc * 2 >= cnt[l]) return v; } return 255; });
+      palette[l] = [m[0], m[1], m[2]];
+    });
   }
   progress(0.2, 'Limpando ruído');
   removeSpeckles(labels, w, h, o.speckle, palette.map((c) => rgbToLab(...c)));
@@ -127,5 +150,5 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   progress(1, 'Pronto');
   let transparent = false;
   for (let i = 0; i < labels.length && !transparent; i++) if (labels[i] < 0) transparent = true;
-  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored } };
+  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored, noise: dn.noise.sigma, denoised: dn.applied } };
 }

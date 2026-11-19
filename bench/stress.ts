@@ -44,10 +44,18 @@ const soft: Degradation = {
     let cur = img;
     for (let p = 0; p < 2; p++) {
       const d = new Uint8ClampedArray(cur.data.length), { width: w, height: h } = cur;
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 4; c++) {
-        let s = 0, n = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h) { s += cur.data[(yy * w + xx) * 4 + c]; n++; } }
-        d[(y * w + x) * 4 + c] = s / n;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        // blur PRÉ-MULTIPLICADO (como editores/navegadores fazem): a cor dos pixels transparentes não vaza para a borda
+        let sr = 0, sg = 0, sb = 0, sa = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const i = (yy * w + xx) * 4, a = cur.data[i + 3];
+          sr += cur.data[i] * a; sg += cur.data[i + 1] * a; sb += cur.data[i + 2] * a; sa += a; n++;
+        }
+        const o = (y * w + x) * 4;
+        d[o + 3] = sa / n;
+        if (sa > 0) { d[o] = sr / sa; d[o + 1] = sg / sa; d[o + 2] = sb / sa; }
       }
       cur = { data: d, width: w, height: h };
     }
@@ -60,14 +68,14 @@ export const STRESS_CASES = ['logo', 'icon', 'lineart', 'text', 'illustration'];
 
 export interface StressRow {
   caseId: string; degradation: string; nodes: number; cleanNodes: number;
-  ssimVsInput: number; ssimVsTruth: number; deltaEVsTruth: number; edgeVsTruth: number; ms: number;
+  ssimVsInput: number; ssimVsTruth: number; deltaEVsTruth: number; edgeVsTruth: number; flatVsTruth: number; noise: number; ms: number;
 }
 
-export function runStress(cases = STRESS_CASES, degs = DEGRADATIONS): StressRow[] {
+export function runStress(cases = STRESS_CASES, degs = DEGRADATIONS, over: { denoise?: number } = {}): StressRow[] {
   const rows: StressRow[] = [];
   for (const id of cases) {
     const c = CASES.find((x) => x.id === id)!;
-    const o = { ...PRESETS.find((p) => p.id === c.preset)!.options, ...c.options };
+    const o = { ...PRESETS.find((p) => p.id === c.preset)!.options, ...c.options, ...(over.denoise !== undefined ? { denoise: over.denoise } : {}) };
     const clean = rasterize(c.svg);
     const cleanNodes = vectorize(clean, o).stats.nodes;
     for (const d of degs) {
@@ -77,20 +85,36 @@ export function runStress(cases = STRESS_CASES, degs = DEGRADATIONS): StressRow[
       const ms = performance.now() - t0;
       const out = renderSvg(toSVG(doc, o), input.width);
       const vsInput = compare(input, out), vsTruth = compare(clean, out);
-      rows.push({ caseId: id, degradation: d.id, nodes: doc.stats.nodes, cleanNodes, ssimVsInput: vsInput.ssim, ssimVsTruth: vsTruth.ssim, deltaEVsTruth: vsTruth.deltaE, edgeVsTruth: vsTruth.deltaEEdge, ms });
+      rows.push({ caseId: id, degradation: d.id, nodes: doc.stats.nodes, cleanNodes, ssimVsInput: vsInput.ssim, ssimVsTruth: vsTruth.ssim, deltaEVsTruth: vsTruth.deltaE, edgeVsTruth: vsTruth.deltaEEdge, flatVsTruth: vsTruth.deltaEFlat, noise: doc.stats.noise, ms });
     }
   }
   return rows;
 }
 
 export function formatStress(rows: StressRow[]): string {
-  const h = ['caso', 'degradação', 'nós (limpo)', 'SSIM×entrada', 'SSIM×verdade', 'ΔE×verdade', 'ΔEborda×verdade', 'nós/limpo'];
+  const h = ['caso', 'degradação', 'nós (limpo)', 'SSIM×entrada', 'SSIM×verdade', 'ΔE×verdade', 'ΔEborda×verdade', 'ΔEplano×verdade', 'nós/limpo', 'ruído σ̂', 'ms'];
   const lines = [h.join('\t')];
-  for (const r of rows) lines.push([r.caseId, r.degradation, `${r.nodes} (${r.cleanNodes})`, r.ssimVsInput.toFixed(4), r.ssimVsTruth.toFixed(4), r.deltaEVsTruth.toFixed(2), r.edgeVsTruth.toFixed(2), `${(r.nodes / Math.max(1, r.cleanNodes)).toFixed(1)}×`].join('\t'));
+  for (const r of rows) lines.push([r.caseId, r.degradation, `${r.nodes} (${r.cleanNodes})`, r.ssimVsInput.toFixed(4), r.ssimVsTruth.toFixed(4), r.deltaEVsTruth.toFixed(2), r.edgeVsTruth.toFixed(2), r.flatVsTruth.toFixed(2), `${(r.nodes / Math.max(1, r.cleanNodes)).toFixed(1)}×`, r.noise ? r.noise.toFixed(1) : '—', Math.round(r.ms)].join('\t'));
+  return lines.join('\n');
+}
+
+/** A/B: pré-filtro desligado (antes) × ligado (depois), com variação de cada métrica contra a VERDADE limpa. */
+export function formatAB(off: StressRow[], on: StressRow[]): string {
+  const h = ['caso', 'degradação', 'nós antes→depois', 'SSIM×verdade', 'ΔE×verdade', 'ΔEborda×verdade', 'ΔEplano×verdade', 'σ̂', 'ms antes→depois'];
+  const lines = [h.join('\t')];
+  const f = (a: number, b: number, d: number) => `${a.toFixed(d)}→${b.toFixed(d)}`;
+  off.forEach((a, i) => {
+    const b = on[i];
+    lines.push([a.caseId, a.degradation, `${a.nodes}→${b.nodes}`, f(a.ssimVsTruth, b.ssimVsTruth, 4), f(a.deltaEVsTruth, b.deltaEVsTruth, 2), f(a.edgeVsTruth, b.edgeVsTruth, 2), f(a.flatVsTruth, b.flatVsTruth, 2), b.noise ? b.noise.toFixed(1) : '—', `${Math.round(a.ms)}→${Math.round(b.ms)}`].join('\t'));
+  });
   return lines.join('\n');
 }
 
 if (process.argv[1]?.endsWith('stress.ts')) {
-  const only = process.argv.includes('--cases') ? process.argv[process.argv.indexOf('--cases') + 1].split(',') : STRESS_CASES;
-  console.log(formatStress(runStress(only)));
+  const arg = (n: string) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : undefined);
+  const only = arg('--cases')?.split(',') ?? STRESS_CASES;
+  const degs = arg('--degs')?.split(',');
+  const sel = degs ? DEGRADATIONS.filter((d) => degs.includes(d.id)) : DEGRADATIONS;
+  if (process.argv.includes('--ab')) console.log(formatAB(runStress(only, sel, { denoise: 0 }), runStress(only, sel, { denoise: Number(arg('--denoise') ?? 1) })));
+  else console.log(formatStress(runStress(only, sel, arg('--denoise') !== undefined ? { denoise: Number(arg('--denoise')) } : {})));
 }

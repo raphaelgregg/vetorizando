@@ -159,6 +159,7 @@ function renderStats() {
   const red = st.rawPoints ? Math.round((1 - st.nodes / st.rawPoints) * 100) : 0;
   $('stats').innerHTML = [['nós', st.nodes], ['retas', st.lines], ['arcos', st.arcs], ['elipses', st.ellipses], ['curvas', st.curves], ['caminhos', st.paths], ['cores', st.colors]]
     .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('')
+    + (st.denoised ? `<span class="chip" title="Ruído/artefatos JPEG detectados: pré-filtro com preservação de bordas aplicado antes da vetorização">ruído σ̂ ${st.noise.toFixed(1)} · filtrado</span>` : '')
     + `<span class="chip" title="Pontos de contorno antes do ajuste → nós finais">${st.rawPoints} pts → <b>${st.nodes}</b> nós (−${red}%)</span>`;
   const o = state.options;
   $('summary').textContent = `${o.drawStyle === 'fill' ? 'Preenchido' : 'Contornos'} · ${o.stacking === 'stacked' ? 'Empilhado' : 'Recortes'} · Agrupar: ${o.groupBy === 'color' ? 'cor' : o.groupBy === 'layer' ? 'camada' : 'nenhum'} · Fenda: ${o.gapFiller && o.stacking === 'cutouts' && o.drawStyle === 'fill' ? 'ligado' : 'desligado'}`;
@@ -191,9 +192,10 @@ function renderPresets() {
   }));
 }
 
-type NumKey = 'maxColors' | 'edgeDelta' | 'mergeDeltaE' | 'speckle' | 'lineFitTolerance' | 'cornerThreshold' | 'smooth' | 'gapStrokeWidth';
+type NumKey = 'maxColors' | 'denoise' | 'edgeDelta' | 'mergeDeltaE' | 'speckle' | 'lineFitTolerance' | 'cornerThreshold' | 'smooth' | 'gapStrokeWidth';
 const RANGES: [NumKey, string, number, number, number][] = [
   ['maxColors', 'Máximo de cores', 2, 64, 1],
+  ['denoise', 'Redução de ruído / JPEG (0 = desligada · 1 = automática)', 0, 3, 0.5],
   ['mergeDeltaE', 'Mesclar tons próximos (ΔE)', 0, 25, 1],
   ['speckle', 'Remover manchas (px²)', 0, 100, 1],
   ['lineFitTolerance', 'Tolerância de ajuste (px)', 0.1, 3, 0.1],
