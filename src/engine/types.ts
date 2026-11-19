@@ -14,6 +14,8 @@ export type Seg =
 export interface VPath {
   start: Pt;
   segs: Seg[];
+  /** contorno de traço fino (largura ≲ 4 px): não recebe traço de preenchimento de fendas (vazaria nos pixels de borda) */
+  thin?: boolean;
 }
 
 export interface Layer {

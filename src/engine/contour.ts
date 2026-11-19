@@ -9,6 +9,11 @@ export function loopArea(p: Pt[]): number {
   return a / 2;
 }
 
+const RIDGE_MIN = 0.25; // tinta mínima para contar como linha (abaixo disso é ruído)
+const PLATEAU_MIN = 0.4; // tinta mínima de cada pixel de um perfil de 2 px para ser tratado como linha
+const RIDGE_SIDE = 0.15;
+const RIDGE_ALONG = 0.2; // a tinta deve continuar ≥ isto nos dois vizinhos ao longo da linha // vizinhos transversais ≤ isto → crista isolada
+
 type Edge = 'T' | 'R' | 'B' | 'L';
 const MID: Record<Edge, [number, number]> = { T: [0.5, 0], R: [1, 0.5], B: [0.5, 1], L: [0, 0.5] };
 const CORNER: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]]; // tl, tr, br, bl
@@ -77,6 +82,44 @@ export function traceField(mask: Uint8Array, w: number, h: number, sigma: number
       const pi = yy * w + Math.min(w - 1, Math.max(0, bx + i));
       src[j * gw + i] = cover?.get(pi) ?? mask[pi];
     }
+  }
+  // crista de 1 pixel (máximo local estrito): a isolinha 0,5 de uma “tenda” de altura h tem largura 2(1−0,5/h),
+  // subestimando a tinta (h); com h' = 0,5/(1−h/2) a largura vira exatamente h → conserva a espessura da linha fina
+  if (cover) {
+    const ridge: number[] = [];
+    for (let j = 1; j < gh - 1; j++) {
+      for (let i = 1; i < gw - 1; i++) {
+        const q = j * gw + i, f = src[q];
+        if (f < RIDGE_MIN || f >= 1) continue;
+        // crista ISOLADA de uma LINHA: vizinhos transversais ≈ 0 e a tinta CONTINUA dos dois lados ao longo da linha.
+        // Ponta de forma (um lado vazio) e ponto isolado (os dois vazios) não qualificam; ruído de foto também não.
+        const lineX = src[q - 1] <= RIDGE_SIDE && src[q + 1] <= RIDGE_SIDE && src[q - gw] >= RIDGE_ALONG && src[q + gw] >= RIDGE_ALONG;
+        const lineY = src[q - gw] <= RIDGE_SIDE && src[q + gw] <= RIDGE_SIDE && src[q - 1] >= RIDGE_ALONG && src[q + 1] >= RIDGE_ALONG;
+        if (lineX || lineY) ridge.push(q);
+      }
+    }
+    // perfil de 2 pixels isolado ([0, a, b, 0], ambos ≥ 0,3): um deles pode ficar logo abaixo de 0,5 (ex.: 0,4997 numa linha de
+    // 1 px a cavalo entre duas fileiras) e a linha seria cortada; sobe para o limiar, o que dá largura ≥ 1 px
+    const lift: number[] = [];
+    for (let j = 2; j < gh - 2; j++) {
+      for (let i = 2; i < gw - 2; i++) {
+        const q = j * gw + i, f = src[q];
+        if (f < PLATEAU_MIN || f >= 0.5) continue;
+        for (const st of [1, gw]) {
+          const along = st === 1 ? gw : 1; // direção da linha (perpendicular ao par)
+          if (src[q - along] < RIDGE_ALONG || src[q + along] < RIDGE_ALONG) continue; // a tinta tem de continuar ao longo da linha
+          let ok = false;
+          for (const dir of [-1, 1]) {
+            const fn = src[q + dir * st];
+            // platô (valores parecidos), não rampa: |a − b| ≤ 0,2
+            if (fn >= PLATEAU_MIN && Math.abs(fn - f) <= 0.2 && src[q - dir * st] <= RIDGE_SIDE && src[q + 2 * dir * st] <= RIDGE_SIDE) ok = true;
+          }
+          if (ok) { lift.push(q); break; }
+        }
+      }
+    }
+    for (const q of lift) src[q] = 0.5;
+    for (const q of ridge) src[q] = Math.min(1, 0.5 / (1 - src[q] / 2));
   }
   const k: number[] = [];
   let ks = 0;

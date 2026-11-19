@@ -28,7 +28,7 @@ export function toEPS(doc: VDoc, o: Options, size: ResolvedSize): string {
     s += '%%Group: Preenchimento de fendas\ngsave\n';
     if (doc.openBoundary) { s += 'newpath\n'; for (const l of doc.layers) for (const p of l.paths) s += pathOps(p); s += 'clip\n'; }
     s += `${fmt(o.gapStrokeWidth, 4)} setlinewidth\n`;
-    for (const l of doc.layers) { s += `${rgb(l.color)} setrgbcolor\nnewpath\n`; for (const p of l.paths) s += pathOps(p); s += 'stroke\n'; }
+    for (const l of doc.layers) { const ps = l.paths.filter((p) => !p.thin); if (!ps.length) continue; s += `${rgb(l.color)} setrgbcolor\nnewpath\n`; for (const p of ps) s += pathOps(p); s += 'stroke\n'; }
     s += 'grestore\n';
   }
   for (const g of groupLayers(doc, o)) {

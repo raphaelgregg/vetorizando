@@ -11,6 +11,18 @@ export interface Transitions {
 export const NO_TRANSITIONS: Transitions = { idx: new Int32Array(0), a: new Int16Array(0), b: new Int16Array(0), t: new Float32Array(0) };
 
 const R = 2; // vizinhança 5×5
+/** Espessura local (px, truncada em 3): menor corrida horizontal/vertical do mesmo rótulo passando pelo pixel. */
+function thickness(labels: Int16Array, w: number, h: number, x: number, y: number, m: number): number {
+  const run = (dx: number, dy: number) => {
+    let n = 1;
+    for (let s = 1; s <= 2; s++) { const xx = x - dx * s, yy = y - dy * s; if (xx < 0 || yy < 0 || xx >= w || yy >= h || labels[yy * w + xx] !== m) break; n++; }
+    for (let s = 1; s <= 2; s++) { const xx = x + dx * s, yy = y + dy * s; if (xx < 0 || yy < 0 || xx >= w || yy >= h || labels[yy * w + xx] !== m) break; n++; }
+    return Math.min(3, n);
+  };
+  return Math.min(run(1, 0), run(0, 1));
+}
+
+const THIN_CLUSTER = 0.6; // fração mínima de pixels finos para um cluster ser tratado como mistura de rampa
 
 interface Blend { d: number; t: number }
 
@@ -42,6 +54,38 @@ function neighbours(labels: Int16Array, w: number, h: number, x: number, y: numb
 }
 
 /**
+ * Extremos da rampa: se as cores A e B estão (≤ `tol` ΔE) sobre um segmento E1–E2 mais longo da paleta,
+ * A e/ou B são tons intermediários (misturas) e a cobertura deve ser medida entre E1 e E2.
+ * Só substitui um extremo se o cluster dele for FINO (maioria dos pixels em franjas/traços de ≤ 2 px) —
+ * regiões largas (degradês, áreas cinza reais) continuam intactas.
+ */
+function rampExtremes(a: number, b: number, palette: Lab[], thinFrac: Float64Array, tol: number): [number, number] {
+  const A = palette[a], B = palette[b];
+  const lenAB = Math.sqrt(dist2(A, B));
+  let best: [number, number] = [a, b], bestLen = lenAB;
+  const near = (P: Lab, E1: Lab, E2: Lab) => {
+    const ab = [E2[0] - E1[0], E2[1] - E1[1], E2[2] - E1[2]];
+    const l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    const t = ((P[0] - E1[0]) * ab[0] + (P[1] - E1[1]) * ab[1] + (P[2] - E1[2]) * ab[2]) / l2;
+    if (t < -0.05 || t > 1.05) return false;
+    const q: Lab = [E1[0] + t * ab[0], E1[1] + t * ab[1], E1[2] + t * ab[2]];
+    return Math.sqrt(dist2(P, q)) <= tol;
+  };
+  for (let e1 = 0; e1 < palette.length; e1++) {
+    for (let e2 = e1 + 1; e2 < palette.length; e2++) {
+      const len = Math.sqrt(dist2(palette[e1], palette[e2]));
+      if (len <= bestLen + 1) continue;
+      if (!near(A, palette[e1], palette[e2]) || !near(B, palette[e1], palette[e2])) continue;
+      // os extremos escolhidos só podem trocar clusters pequenos (A/B que não forem eles mesmos)
+      const keepsA = e1 === a || e2 === a, keepsB = e1 === b || e2 === b;
+      if ((!keepsA && thinFrac[a] < THIN_CLUSTER) || (!keepsB && thinFrac[b] < THIN_CLUSTER)) continue;
+      best = [e1, e2]; bestLen = len;
+    }
+  }
+  return best;
+}
+
+/**
  * Anti-aliasing: pixels de borda são mistura de duas cores da paleta. Esta etapa
  *  1) descarta clusters “de mistura” (pequenos e explicáveis como mistura de dois outros),
  *  2) estima, para cada pixel de borda, a fração (cobertura) de cada uma das duas cores e
@@ -58,13 +102,14 @@ export function resolveTransitions(img: RawImage, labels: Int16Array, palette: L
   };
 
   // 1) clusters de mistura
-  const tot = new Float64Array(n), expl = new Float64Array(n);
+  const tot = new Float64Array(n), expl = new Float64Array(n), thinCnt = new Float64Array(n);
   let opaque = 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x, m = labels[i];
       if (m < 0) continue;
       opaque++; tot[m]++;
+      if (thickness(labels, w, h, x, y, m) <= 2) thinCnt[m]++;
       const nb = neighbours(labels, w, h, x, y, m, null);
       if (nb.length < 2) continue;
       const { lab, px } = pix(i);
@@ -82,6 +127,16 @@ export function resolveTransitions(img: RawImage, labels: Int16Array, palette: L
   let kept = n;
   for (let m = 0; m < n; m++) if (tot[m] > 0 && kept > 2 && expl[m] / tot[m] >= 0.5 && tot[m] <= 0.015 * opaque) { mix[m] = 1; kept--; }
 
+  const thinFrac = new Float64Array(n);
+  for (let m = 0; m < n; m++) thinFrac[m] = tot[m] ? thinCnt[m] / tot[m] : 0;
+  const rampCache = new Map<number, [number, number]>();
+  const ramp = (a: number, b: number) => {
+    const key = a * n + b;
+    let r = rampCache.get(key);
+    if (!r) { r = rampExtremes(a, b, palette, thinFrac, 10); rampCache.set(key, r); }
+    return r;
+  };
+  const thin = (src: Int16Array, x: number, y: number, m: number) => thickness(src, w, h, x, y, m) <= 2; // traço de até 2 px
   // 2–3) cobertura e realocação
   const found = new Map<number, [number, number, number]>();
   for (let pass = 0; pass < passes; pass++) {
@@ -115,6 +170,17 @@ export function resolveTransitions(img: RawImage, labels: Int16Array, palette: L
             labels[i] = bl; any = true;
           }
           continue;
+        }
+        if (thin(src, x, y, m)) {
+          // pixel de traço fino: a cobertura é medida entre os EXTREMOS da rampa, não contra cinzas intermediários
+          const [e1, e2] = ramp(ba, bb);
+          if (e1 !== ba || e2 !== bb) {
+            const RA = rgb[e1], RB = rgb[e2];
+            const dr = [RB[0] - RA[0], RB[1] - RA[1], RB[2] - RA[2]];
+            const l2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2] || 1;
+            const t = Math.min(1, Math.max(0, ((px[0] - RA[0]) * dr[0] + (px[1] - RA[1]) * dr[1] + (px[2] - RA[2]) * dr[2]) / l2));
+            ba = e1; bb = e2; bt = t;
+          }
         }
         const lab2 = bt < 0.5 ? ba : bb;
         if (lab2 !== m) { labels[i] = lab2; any = true; }

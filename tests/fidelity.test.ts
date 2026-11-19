@@ -19,7 +19,8 @@ function ink(img: RawImage, x0: number, y0: number, x1: number, y1: number): num
   let s = 0;
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
     const i = (y * img.width + x) * 4, a = img.data[i + 3] / 255;
-    s += 255 - (0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2]) * a - 255 * (1 - a) * 0 - (1 - a) * 0;
+    const lum = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
+    s += 255 - (lum * a + 255 * (1 - a)); // compõe sobre branco (o render tem alfa nas bordas)
   }
   return s;
 }
@@ -90,6 +91,78 @@ describe('traços finos e detalhes pequenos são preservados', () => {
     const m = compare(img, renderSvg(toSVG(vectorize(img, o), o), img.width));
     expect(m.ssim).toBeGreaterThan(0.985);
     expect(m.deltaE).toBeLessThan(0.4);
+  });
+});
+
+/** tinta por coluna numa faixa vertical em torno de uma reta y = f(x) */
+function inkColumns(img: RawImage, f: (x: number) => number, xa: number, xb: number, hw = 4): number[] {
+  const out: number[] = [];
+  for (let x = xa; x < xb; x++) out.push(ink(img, x, Math.round(f(x)) - hw, x + 1, Math.round(f(x)) + hw + 1));
+  return out;
+}
+
+describe('hairlines e linhas finas de baixa cobertura (sem tracejado)', () => {
+  it('diagonal de 1,2 px: contínua (nenhuma coluna perde > 25% da tinta) e erro médio de tinta ≤ 12%', () => {
+    const svg = svgDoc('<path d="M20 30L180 70" stroke="#111" stroke-width="1.2" fill="none"/>');
+    const { img, out } = roundtrip(svg, opts({ maxColors: 8 }), 200);
+    const f = (x: number) => 30 + ((x - 20) * 40) / 160;
+    const a = inkColumns(img, f, 30, 170), b = inkColumns(out, f, 30, 170);
+    expect(Math.min(...b.map((v, i) => v / a[i]))).toBeGreaterThan(0.75); // antes: colunas com 0% (tracejado)
+    const mean = b.reduce((x, y) => x + y, 0) / a.reduce((x, y) => x + y, 0);
+    expect(Math.abs(mean - 1)).toBeLessThan(0.12);
+  });
+  it('linha de 0,9 px a cavalo entre duas fileiras (≈ 45% cada, abaixo do limiar 0,5) não desaparece', () => {
+    const { img, out } = roundtrip(svgDoc('<rect x="20" y="49.55" width="160" height="0.9" fill="#000"/>'), opts(), 200);
+    const a = ink(img, 10, 40, 190, 60), b = ink(out, 10, 40, 190, 60);
+    expect(b / a).toBeGreaterThan(0.7);
+    expect(b / a).toBeLessThan(1.4);
+  });
+  it('linha fraca de 1 pixel isolada (cobertura 0,6 numa fileira) mantém a tinta (crista isolada)', () => {
+    const { img, out } = roundtrip(svgDoc('<rect x="20" y="49.2" width="160" height="0.6" fill="#000"/>'), opts(), 200);
+    const a = ink(img, 10, 40, 190, 60), b = ink(out, 10, 40, 190, 60);
+    expect(b / a).toBeGreaterThan(0.7);
+    expect(b / a).toBeLessThan(1.4);
+  });
+  it('ponta de forma (estrela) não é inflada pelo remapeamento de cristas', () => {
+    const star = svgDoc('<polygon fill="#222" points="100,20 118,80 180,80 130,115 150,180 100,140 50,180 70,115 20,80 82,80"/>', 200, 200);
+    const img = rasterize(star, 200), o = opts();
+    const m = compare(img, renderSvg(toSVG(vectorize(img, o), o), 200));
+    // valores de referência medidos no commit anterior (85a3c45): SSIM 0,9933 · ΔEborda 1,67 · 38 nós
+    expect(m.ssim).toBeGreaterThan(0.992);
+    expect(m.deltaEEdge).toBeLessThan(1.8);
+    expect(vectorize(img, o).stats.nodes).toBeLessThanOrEqual(42);
+  });
+});
+
+describe('estruturas finas: espessura medida por estrutura, cantos e fendas', () => {
+  const grid = svgDoc(`<g stroke="#111" stroke-width="1" fill="none">${[40, 60, 80, 100].map((y) => `<path d="M20 ${y}H180"/>`).join('')}${[20, 70, 120, 170].map((x) => `<path d="M${x} 40V100"/>`).join('')}</g>`, 200, 140);
+  it('moldura de grade de 1 px: nenhuma aresta LONGA inclinada (regressão: vértice de canto mal posto virava diagonal de 60 px)', () => {
+    const d = vectorize(rasterize(grid, 200), opts({ maxColors: 8 }));
+    const black = d.layers.filter((l) => l.color !== '#ffffff').flatMap((l) => l.paths);
+    expect(black.length).toBeGreaterThan(0);
+    for (const p of black) {
+      let cur = p.start;
+      for (const sg of p.segs) {
+        const dx = Math.abs(sg.p.x - cur.x), dy = Math.abs(sg.p.y - cur.y);
+        if (Math.max(dx, dy) > 5) expect(Math.min(dx, dy)).toBeLessThan(0.3); // arestas longas são H/V (chanfros de ~1 px nos cruzamentos são do raster)
+        cur = sg.p;
+      }
+    }
+  });
+  it('estruturas finas (grade) são marcadas `thin` e ficam FORA do traço de fendas', () => {
+    const o = opts({ maxColors: 8 });
+    const d = vectorize(rasterize(grid, 200), o);
+    const thin = d.layers.flatMap((l) => l.paths).filter((p) => p.thin);
+    expect(thin.length).toBeGreaterThan(0);
+    const svg = toSVG(d, o);
+    const gaps = svg.slice(svg.indexOf('id="fendas"'), svg.indexOf('</g>', svg.indexOf('id="fendas"')));
+    expect(gaps).not.toContain('stroke="#111111"'); // o traço de 0,6 px sobre uma linha de 1 px a engrossaria ~30%
+  });
+  it('barra de 4 px termina em pontas QUADRADAS (retângulo de 4 retas), não em arcos', () => {
+    const d = vectorize(rasterize(svgDoc('<rect x="20" y="90" width="160" height="4" fill="#000"/>'), 200), opts({ removeBackground: true }));
+    const p = d.layers[0].paths[0];
+    expect(p.segs.length).toBe(4);
+    expect(p.segs.every((sg) => sg.t === 'L')).toBe(true);
   });
 });
 

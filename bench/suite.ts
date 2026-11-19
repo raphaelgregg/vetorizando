@@ -122,6 +122,18 @@ export function proposeThresholds(r: Row): Thresholds {
   return t;
 }
 
+/** Combina limites: fica o mais ESTRITO de cada métrica (SSIM maior; ΔE/HD95/nós menores), salvo `loosen`. */
+export function mergeStricter(old: Thresholds | undefined, proposed: Thresholds, loosen = false): Thresholds {
+  if (!old || loosen) return proposed;
+  const out: Thresholds = { ...old };
+  for (const k of Object.keys(proposed) as (keyof Thresholds)[]) {
+    const a = old[k], b = proposed[k];
+    if (b === undefined) continue;
+    out[k] = a === undefined ? b : k === 'ssim' ? Math.max(a, b) : Math.min(a, b);
+  }
+  return out;
+}
+
 export function formatTable(rows: Row[]): string {
   const h = ['caso', 'preset', 'SSIM', 'ΔE', 'ΔE95', 'HD95', 'HDmax', 'nós', 'KB', 'ms', 'ΔEborda', 'ΔEplano', 'status'];
   const lines = [h.join('\t')];

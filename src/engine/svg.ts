@@ -41,7 +41,10 @@ export function toSVG(doc: VDoc, o: Options, size: SvgSize = {}): string {
     if (clip) parts.push(`<defs><clipPath id="uniao"><path d="${doc.layers.map((l) => dOf.get(l)).join('')}"/></clipPath></defs>`);
     const attrs = `id="fendas"${layered ? ' inkscape:groupmode="layer" inkscape:label="Preenchimento de fendas"' : ''} fill="none" stroke-width="${num(o.gapStrokeWidth)}" stroke-linejoin="round"${clip ? ' clip-path="url(#uniao)"' : ''}`;
     parts.push(`<g ${attrs}>`);
-    for (const layer of doc.layers) parts.push(`<path stroke="${layer.color}" d="${dOf.get(layer)}"/>`);
+    for (const layer of doc.layers) {
+      const d = layer.paths.filter((p) => !p.thin).map(pathData).join('');
+      if (d) parts.push(`<path stroke="${layer.color}" d="${d}"/>`);
+    }
     parts.push('</g>');
   }
   for (const g of groupLayers(doc, o)) {

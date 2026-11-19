@@ -97,7 +97,7 @@ function turnAngle(q: Pt[], i: number, k: number): number {
  * verdadeiro o ângulo persiste nas duas escalas; numa curva fechada ele dobra com a escala.
  * Evita falsos cantos em curvas pequenas e no ruído.
  */
-function detectCorners(p: Pt[], thresholdDeg: number, k: number, light = true): { corners: number[]; ang: Float64Array } {
+function detectCorners(p: Pt[], thresholdDeg: number, k: number, light = true, ratioTest = true): { corners: number[]; ang: Float64Array } {
   const n = p.length;
   const ang = new Float64Array(n);
   const kk = Math.min(k, Math.floor(n / 6));
@@ -106,7 +106,7 @@ function detectCorners(p: Pt[], thresholdDeg: number, k: number, light = true): 
     const a = p[(i - 1 + n) % n], b = p[(i + 1) % n];
     return { x: (a.x + p[i].x + b.x) / 3, y: (a.y + p[i].y + b.y) / 3 };
   });
-  const wide = 2 * kk < n / 2;
+  const wide = ratioTest && 2 * kk < n / 2; // em traço fino a janela 2k abrange a feature inteira: sem teste de razão
   const ang2 = new Float64Array(n);
   for (let i = 0; i < n; i++) { ang[i] = turnAngle(q, i, kk); if (wide) ang2[i] = turnAngle(q, i, 2 * kk); }
   const corners: number[] = [];
@@ -355,12 +355,13 @@ function fitRun(P: Pt[], tStart: Pt, tEnd: Pt, tol: number, arcs: boolean, ellip
   const m = P.length;
   // trecho entre dois cantos que é uma única reta: a ponta (arredondada pela cobertura do pixel) não conta;
   // o vértice exato é recuperado depois pela interseção das retas vizinhas
-  if (cornerRun && m > 8) {
+  if (cornerRun && m >= 4) {
     const l = tlsLine(P);
     if (l) {
       let ok = true;
       const off = (q: Pt) => Math.abs((q.x - l.c.x) * l.d.y - (q.y - l.c.y) * l.d.x);
-      for (let i = 2; i < m - 2 && ok; i++) if (off(P[i]) > tol) ok = false;
+      const trim = m > 8 ? 2 : 1; // pontas arredondadas pela cobertura do pixel (chanfro de ~0,7 px) não contam
+      for (let i = trim; i < m - trim && ok; i++) if (off(P[i]) > tol) ok = false;
       if (off(P[0]) > Math.max(1, tol * 2) || off(P[m - 1]) > Math.max(1, tol * 2)) ok = false; // pontas fora da reta: não é aresta de polígono
       if (ok) return [{ t: 'L', p: P[m - 1] }];
     }
@@ -420,11 +421,53 @@ function tlsLine(pts: Pt[]): { c: Pt; d: Pt } | null {
   return { c: { x: mx, y: my }, d: { x: Math.cos(th), y: Math.sin(th) } };
 }
 
+const MIN_TERMINAL_LINE = 3; // px: reta terminal curta demais não define direção
+
+/** Reta do último segmento de um trecho (se for reta longa). */
+function endLine(r: { segs: Seg[] }, runStart: Pt): { c: Pt; d: Pt } | null {
+  const n = r.segs.length, last = r.segs[n - 1];
+  if (last.t !== 'L') return null;
+  const from = n > 1 ? r.segs[n - 2].p : runStart;
+  const dx = last.p.x - from.x, dy = last.p.y - from.y, l = Math.hypot(dx, dy);
+  return l >= MIN_TERMINAL_LINE ? { c: last.p, d: { x: dx / l, y: dy / l } } : null;
+}
+
+/** Reta do primeiro segmento de um trecho (se for reta longa). */
+function startLine(r: { segs: Seg[] }, runStart: Pt): { c: Pt; d: Pt } | null {
+  const first = r.segs[0];
+  if (first.t !== 'L') return null;
+  const dx = first.p.x - runStart.x, dy = first.p.y - runStart.y, l = Math.hypot(dx, dy);
+  return l >= MIN_TERMINAL_LINE ? { c: runStart, d: { x: dx / l, y: dy / l } } : null;
+}
+
 function intersect(a: { c: Pt; d: Pt }, b: { c: Pt; d: Pt }): Pt | null {
   const den = a.d.x * b.d.y - a.d.y * b.d.x;
   if (Math.abs(den) < 0.35) return null; // quase paralelas (< ~20°): não refina
   const t = ((b.c.x - a.c.x) * b.d.y - (b.c.y - a.c.y) * b.d.x) / den;
   return { x: a.c.x + a.d.x * t, y: a.c.y + a.d.y * t };
+}
+
+/** Douglas–Peucker iterativo para um contorno FECHADO (divide em dois pelos pontos mais distantes). */
+function simplifyClosed(p: Pt[], tol: number): Pt[] {
+  const n = p.length;
+  let far = 0, fd = -1;
+  for (let i = 1; i < n; i++) { const d = Math.hypot(p[i].x - p[0].x, p[i].y - p[0].y); if (d > fd) { fd = d; far = i; } }
+  const keep = new Uint8Array(n);
+  keep[0] = 1; keep[far] = 1;
+  const stack: [number, number][] = [[0, far], [far, n]]; // o segundo trecho fecha no ponto 0 (índice n ≡ 0)
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const A = p[a % n], B = p[b % n];
+    const dx = B.x - A.x, dy = B.y - A.y, l = Math.hypot(dx, dy);
+    let md = -1, mi = -1;
+    for (let i = a + 1; i < b; i++) {
+      const q = p[i % n];
+      const d = l < 1e-9 ? Math.hypot(q.x - A.x, q.y - A.y) : Math.abs((q.x - A.x) * dy - (q.y - A.y) * dx) / l;
+      if (d > md) { md = d; mi = i; }
+    }
+    if (md > tol && mi > 0) { keep[mi % n] = 1; stack.push([a, mi], [mi, b]); }
+  }
+  return p.filter((_, i) => keep[i]);
 }
 
 /** Remove retas minúsculas entre outras primitivas: o ponto final da anterior absorve o da reta. */
@@ -450,11 +493,19 @@ function dropMicroSegments(path: VPath, minLen: number): VPath {
   return { start, segs };
 }
 
+/** `thin` = sem traço de fenda: só para traços realmente finos (< ~3 px); o traço de 0,6 px os engrossaria muito */
+const mark = (p: VPath, hyd: number): VPath => (hyd < NO_GAP_HYDRAULIC ? { ...p, thin: true } : p);
+
 const MICRO = 0.75; // px
+const NO_GAP_HYDRAULIC = 1.5; // px: abaixo disto o contorno não recebe traço de preenchimento de fendas
+const THIN_POLYLINE = 0.9; // px: abaixo disto (largura ≲ 2,2 px) curvas não fazem sentido — polilinha exata simplificada
+const POLY_TOL = 0.25; // px
 const THIN_HYDRAULIC = 2.2; // px: abaixo disso o contorno é de um traço fino (largura ≲ 4 px)
 const THIN_TOL = 0.25; // px
 
 export interface FitOptions {
+  /** raio hidráulico da ESTRUTURA a que o laço pertence (contorno externo + furos); vale o menor entre ele e o do próprio laço */
+  hydraulic?: number;
   merge?: boolean; // fusão conservadora pós-ajuste (padrão: ligada)
   tolerance: number;
   cornerThreshold: number;
@@ -473,11 +524,16 @@ export function fitLoop(loop: Pt[], opts: FitOptions): VPath {
   // contorno fino (raio hidráulico = área/perímetro ≈ meia largura): preserva largura e posição
   let area2 = 0, per = 0;
   for (let i = 0; i < n; i++) { const q = p[(i + 1) % n]; area2 += p[i].x * q.y - q.x * p[i].y; per += Math.hypot(q.x - p[i].x, q.y - p[i].y); }
-  const hyd = per > 0 ? Math.abs(area2 / 2) / per : 0;
+  const hyd = Math.min(per > 0 ? Math.abs(area2 / 2) / per : 0, o.hydraulic ?? Infinity);
   const thin = hyd < THIN_HYDRAULIC;
+  if (hyd < THIN_POLYLINE && n >= 6) {
+    // ultrafino: a forma É a polilinha (cantos e pontas exatos, sem curva inventada)
+    const v = simplifyClosed(p, POLY_TOL);
+    if (v.length >= 3) return { start: v[0], segs: [...v.slice(1), v[0]].map((q) => ({ t: 'L' as const, p: q })), thin: true }; // ultrafino também é “sem fenda”
+  }
   const micro = thin ? 0.3 : MICRO; // em traço fino, 1 px é detalhe real
   if (thin) o = { ...o, smooth: 0, tolerance: Math.min(o.tolerance, THIN_TOL) };
-  const { corners, ang } = detectCorners(p, o.cornerThreshold, thin ? 2 : 4, !thin);
+  const { corners, ang } = detectCorners(p, o.cornerThreshold, thin ? 2 : 4, !thin, !thin);
   // janela proporcional ao contorno: formas pequenas (texto, pontos) não podem ser encolhidas pela média móvel
   const s = smoothPoints(p, corners, Math.min(Math.round(o.smooth), Math.max(1, Math.floor(n / 40))));
   if (corners.length === 0) {
@@ -485,10 +541,10 @@ export function fitLoop(loop: Pt[], opts: FitOptions): VPath {
     for (let i = 1; i < n; i++) if (ang[i] > ang[a0]) a0 = i;
     const r = [...s.slice(a0), ...s.slice(0, a0)];
     const t = norm(sub(r[2 % n], r[n - 2]));
-    return dropMicroSegments({ start: r[0], segs: fitRun([...r, r[0]], t, t, o.tolerance, o.arcs, o.ellipses, false, o.merge !== false) }, micro);
+    return mark(dropMicroSegments({ start: r[0], segs: fitRun([...r, r[0]], t, t, o.tolerance, o.arcs, o.ellipses, false, o.merge !== false) }, micro), hyd);
   }
   // ajusta cada trecho entre cantos e guarda a reta (TLS) dos trechos que viraram uma única reta
-  interface Run { segs: Seg[]; line: { c: Pt; d: Pt } | null }
+  interface Run { segs: Seg[]; line: { c: Pt; d: Pt } | null; start: Pt }
   const runs: Run[] = [];
   for (let c = 0; c < corners.length; c++) {
     const a = corners[c], b = corners[(c + 1) % corners.length];
@@ -502,20 +558,23 @@ export function fitLoop(loop: Pt[], opts: FitOptions): VPath {
     const t1 = norm(sub(part[Math.min(3, m - 1)], part[0]));
     const t2 = norm(sub(part[m - 1], part[Math.max(m - 4, 0)]));
     const rs = fitRun(part, t1, t2, o.tolerance, o.arcs, o.ellipses, true, o.merge !== false);
-    runs.push({ segs: rs, line: rs.length === 1 && rs[0].t === 'L' ? tlsLine(part) : null });
+    runs.push({ segs: rs, line: rs.length === 1 && rs[0].t === 'L' ? tlsLine(part) : null, start: part[0] });
   }
   // refino de cantos: vértice entre duas retas = interseção das retas ajustadas
   let start = s[corners[0]];
   const R = runs.length;
+  const prevStart = (c: number) => runs[(c - 1 + R) % R].start;
   for (let c = 0; c < R; c++) {
     const prev = runs[(c - 1 + R) % R], next = runs[c];
-    if (!prev.line || !next.line) continue;
-    const v = intersect(prev.line, next.line);
     const orig = s[corners[c]];
+    // reta de cada lado: o trecho inteiro (TLS) ou, se o trecho é composto, o seu segmento terminal quando for uma reta longa
+    const lineEnd = prev.line ?? endLine(prev, prevStart(c));
+    const lineStart = next.line ?? startLine(next, orig);
+    const v = lineEnd && lineStart ? intersect(lineEnd, lineStart) : null;
     if (!v || Math.hypot(v.x - orig.x, v.y - orig.y) > Math.max(2, o.tolerance * 3)) continue;
     prev.segs[prev.segs.length - 1] = { t: 'L', p: v };
     if (c === 0) start = v;
   }
   const segs: Seg[] = runs.flatMap((r) => r.segs);
-  return dropMicroSegments({ start, segs }, micro);
+  return mark(dropMicroSegments({ start, segs }, micro), hyd);
 }

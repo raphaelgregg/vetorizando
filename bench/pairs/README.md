@@ -30,13 +30,14 @@ compare `ours` com `↳ ref`: onde `ours` perde, abra `out/nome.render.png` ao l
 
 ```bash
 npm run bench -- --no-builtin --calibrate           # só mostra os limites propostos
-npm run bench -- --no-builtin --calibrate --write   # grava em bench/thresholds.json (chave = nome do par)
+npm run bench -- --no-builtin --calibrate --write   # grava em bench/thresholds.json (chave = nome do par); só APERTA limites existentes
 ```
 
 Os limites propostos têm folga **pequena e fixa** (SSIM −0,002; ΔE ×1,10 + folga; nós ×1,12 + 2) para proteger o ganho atual.
 Depois, `npm test` e `npm run bench` falham se uma mudança no motor piorar esse par. Revise o diff de `bench/thresholds.json`
 antes de commitar e **nunca afrouxe um limite para fazer o teste passar** — investigue a regressão.
-(`npm run bench:calibrate` recalibra também os casos embutidos; use só quando uma melhoria de fidelidade for intencional.)
+`--write` **nunca afrouxa** um limite que já existe (mantém o mais estrito entre o atual e o proposto); para afrouxar de propósito, e só com justificativa, acrescente `--loosen`.
+(`npm run bench:calibrate` recalibra também os casos embutidos; use quando uma melhoria de fidelidade for intencional.)
 
 ## 4. Quando o par mostrar um problema
 

@@ -19,11 +19,11 @@
       "hd95": 1.5
     },
     "illustration": {
-      "ssim": 0.976,
-      "deltaE": 0.96,
-      "deltaEEdge": 5.6,
+      "ssim": 0.977,
+      "deltaE": 0.95,
+      "deltaEEdge": 5.34,
       "deltaEFlat": 0.86,
-      "nodes": 639,
+      "nodes": 626,
       "hd95": 1.5
     },
     "photo": {
@@ -34,43 +34,43 @@
       "nodes": 3807
     },
     "lineart": {
-      "ssim": 0.991,
-      "deltaE": 0.31,
-      "deltaEEdge": 2.6,
+      "ssim": 0.994,
+      "deltaE": 0.23,
+      "deltaEEdge": 1.9,
       "deltaEFlat": 0.05,
       "nodes": 85,
       "hd95": 1.5
     },
     "stripes": {
-      "ssim": 0.994,
-      "deltaE": 0.18,
-      "deltaEEdge": 2.37,
-      "deltaEFlat": 0.07,
+      "ssim": 0.996,
+      "deltaE": 0.11,
+      "deltaEEdge": 1.42,
+      "deltaEFlat": 0.05,
       "nodes": 38,
       "hd95": 1.5
     },
     "text": {
       "ssim": 0.993,
-      "deltaE": 0.26,
-      "deltaEEdge": 2.38,
+      "deltaE": 0.24,
+      "deltaEEdge": 2.23,
       "deltaEFlat": 0.05,
       "nodes": 806,
       "hd95": 1.5
     },
     "ellipses": {
-      "ssim": 0.995,
-      "deltaE": 0.44,
-      "deltaEEdge": 2.84,
+      "ssim": 0.996,
+      "deltaE": 0.42,
+      "deltaEEdge": 2.58,
       "deltaEFlat": 0.28,
-      "nodes": 70,
+      "nodes": 65,
       "hd95": 1.5
     },
     "details": {
-      "ssim": 0.99,
-      "deltaE": 0.29,
-      "deltaEEdge": 2.4,
+      "ssim": 0.994,
+      "deltaE": 0.17,
+      "deltaEEdge": 1.39,
       "deltaEFlat": 0.05,
-      "nodes": 1406,
+      "nodes": 860,
       "hd95": 1.5
     }
   }

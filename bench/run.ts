@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { readFileSync, existsSync } from 'node:fs';
-import { formatTable, loadThresholds, proposeThresholds, runBuiltin, runPairs, Row } from './suite';
+import { formatTable, loadThresholds, mergeStricter, proposeThresholds, runBuiltin, runPairs, Row, ThresholdFile } from './suite';
 
 const args = process.argv.slice(2);
 const opt = (name: string, def?: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : def; };
@@ -31,10 +31,11 @@ if (flag('calibrate')) {
   const proposed = Object.fromEntries(rows.map((r) => [r.id, proposeThresholds(r)]));
   console.log('\nLimites propostos:\n' + JSON.stringify(proposed, null, 2));
   if (flag('write')) {
-    const file = existsSync(thPath) ? JSON.parse(readFileSync(thPath, 'utf8')) : { default: {}, cases: {} };
-    file.cases = { ...file.cases, ...proposed };
+    const file: ThresholdFile & Record<string, unknown> = existsSync(thPath) ? JSON.parse(readFileSync(thPath, 'utf8')) : { default: {}, cases: {} };
+    // por padrão só APERTA (mantém o mais estrito entre o limite atual e o proposto); --loosen permite afrouxar de propósito
+    for (const [id, t] of Object.entries(proposed)) file.cases[id] = mergeStricter(file.cases[id], t, flag('loosen'));
     writeFileSync(thPath, JSON.stringify(file, null, 2) + '\n');
-    console.log(`\nGravado em ${thPath} (${rows.length} casos).`);
+    console.log(`\nGravado em ${thPath} (${rows.length} casos; ${flag('loosen') ? 'pode afrouxar' : 'só aperta'}).`);
   } else console.log('\n(use --write para gravar em ' + thPath + ')');
   process.exit(0);
 }

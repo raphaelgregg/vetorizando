@@ -32,8 +32,10 @@ Prioridades do motor, em ordem: (1) posição/espessura exatas dos contornos, (2
 4. **Suavização adaptativa**: a janela da média móvel é limitada pelo tamanho do contorno (formas pequenas/texto não são encolhidas). **Traços finos** (raio hidráulico área/perímetro < 2,2 px, i.e. largura ≲ 4 px) não são suavizados, usam tolerância ≤ 0,25 px e janela de canto menor — sem isso linhas de 2 px colapsavam em caminhos de área zero.
 5. **Remoção de manchas sensível a contraste**: componentes com conectividade 8 (uma linha diagonal de 1 px é um só); componente pequeno mas contrastante (linha fina, ponto) é detalhe e fica; só franjas de anti-aliasing (cor entre duas vizinhas grandes) e ruído de baixo contraste saem.
 6. **Fusão pós-ajuste conservadora**: 2–3 primitivas vizinhas viram uma só apenas se uma única primitiva cobrir o trecho com desvio ≤ 80% da tolerância contra o contorno original e a junta interna for suave (< 25°); nunca atravessa cantos.
-7. **Preenchimento de fendas correto**: os traços ficam numa camada **abaixo** de todos os preenchimentos (antes ficavam sobre cada forma e engrossavam traços ~0,3 px por lado) e, com transparência/fundo removido, são recortados pela união das regiões (`clipPath` no SVG, `W n` no PDF, `clip` no EPS) para não crescer a silhueta.
-8. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
+7. **Hairlines (linhas finas) sem tracejado**: a tinta de uma linha de ~1 px se espalha em vários tons de cinza; (a) pixels de traço fino são explicados como mistura dos **extremos da rampa** (ex.: branco↔preto) e não de um cinza intermediário (que gerava fragmentos de 2 px apagados como “mancha”); (b) cristas de 1 px **isoladas** (a tinta continua nos dois lados ao longo da linha; pontas de forma e pontos não contam) usam o nível de isolinha que conserva a espessura, e perfis de 2 px a ~50% não caem abaixo do limiar; (c) contornos **ultrafinos** (largura < ~1,8 px) viram a polilinha exata simplificada em 0,25 px, sem curvas inventadas.
+8. **Espessura por estrutura**: o raio hidráulico (tinta/perímetro) é medido por estrutura (contorno externo + furos), de modo que uma grade/moldura de 1 px é tratada como traço fino; cantos finos usam interseção de retas (inclusive quando só o trecho terminal é reta).
+9. **Preenchimento de fendas correto**: os traços ficam numa camada **abaixo** de todos os preenchimentos (antes ficavam sobre cada forma e engrossavam traços ~0,3 px por lado) e, com transparência/fundo removido, são recortados pela união das regiões (`clipPath` no SVG, `W n` no PDF, `clip` no EPS) para não crescer a silhueta.
+10. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
 
 ## Exportação (SVG · PDF · EPS · DXF), unidades e DPI
 
@@ -74,12 +76,12 @@ npm run bench -- --out out --json r.json --preset illustration
 - **Calibrar com imagens reais**: ver o passo a passo em `bench/pairs/README.md` (`npm run bench -- --no-builtin --calibrate --write`).
 - Hausdorff só é significativo com bordas duras: em degradês a quantização cria “bandas” que o original não tem (por isso HD95 não é exigido em ilustração/foto).
 
-Resultados atuais (SSIM / ΔE / ΔEborda / nós): logo 0,9987 / 0,07 / 0,98 / 69 · ícone 0,9964 / 0,18 / 2,58 / 51 · lineart 0,9939 / 0,25 / 2,23 / 74 · texto 0,9958 / 0,21 / 2,03 / 717 · elipses 0,9976 / 0,38 / 2,45 / 60 · listras 0,9969 / 0,14 / 2,02 / 32 · detalhes finos 0,9928 / 0,23 / 2,04 / 1253 · ilustração 0,9788 / 0,84 / 4,95 / 568 · foto 0,8714 / 5,28 / 10,13 / 3397.
+Resultados atuais (SSIM / ΔE / ΔEborda / nós): logo 0,9987 / 0,07 / 0,98 / 69 · ícone 0,9964 / 0,18 / 2,58 / 51 · lineart 0,9969 / 0,18 / 1,60 / 74 · texto 0,9960 / 0,20 / 1,98 / 753 · elipses 0,9980 / 0,36 / 2,21 / 56 · listras 0,9981 / 0,07 / 1,15 / 32 · detalhes finos 0,9965 / 0,13 / 1,13 / 766 · ilustração 0,9794 / 0,84 / 4,72 / 557 · foto 0,8714 / 5,28 / 10,12 / 3492.
 
 ## Lacunas conhecidas (próximas iterações)
 
 1. **Texto** ainda usa ~9–10 nós por glifo (aprox. no piso para tolerância 0,5 px); retângulos arredondados saem como Béziers em vez de `L`+`A` (menos nós, mas menos “semânticos”); fusão pós-ajuste entre primitivas vizinhas ainda não existe.
-2. **Degradês/foto** viram bandas (limite da quantização por cores; mais cores melhoram ΔE mas pioram SSIM por fragmentação): foto SSIM ≈ 0,87. **Hairlines < 1,5 px** (diagonais) saem tracejadas: a tinta fica espalhada em vários tons de cinza.
+2. **Degradês/foto** viram bandas (limite da quantização por cores; mais cores melhoram ΔE mas pioram SSIM por fragmentação): foto SSIM ≈ 0,87. Hairlines **< ~0,5 px** de tinta (cobertura < 0,3 por pixel) ainda podem se perder: abaixo disso o sinal é indistinguível de ruído.
 3. **Gap filler** hoje é traço por caminho (`paint-order`); falta validação automática de ausência de fendas.
 4. **DXF** só em R12 (Béziers viram polilinhas; sem splines/hachuras); **EPS** sem camadas reais (grupos em comentários) e **sem validação em Ghostscript** (verificado por interpretador próprio de teste); PDF sem compressão.
 5. **Pares de referência reais** (imagem → SVG de outra ferramenta) ainda não foram adicionados a `bench/pairs/`.

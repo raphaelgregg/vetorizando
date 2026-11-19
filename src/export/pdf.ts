@@ -35,7 +35,7 @@ export function toPDF(doc: VDoc, o: Options, size: ResolvedSize): Uint8Array {
     c += 'q\n';
     if (doc.openBoundary) { for (const l of doc.layers) for (const p of l.paths) c += pathOps(p); c += 'W n\n'; }
     c += `${fmt(o.gapStrokeWidth, 4)} w\n`;
-    for (const l of doc.layers) { c += `${rgb(l.color).join(' ')} RG\n`; for (const p of l.paths) c += pathOps(p); c += 'S\n'; }
+    for (const l of doc.layers) { const ps = l.paths.filter((p) => !p.thin); if (!ps.length) continue; c += `${rgb(l.color).join(' ')} RG\n`; for (const p of ps) c += pathOps(p); c += 'S\n'; }
     c += 'Q\n';
     if (gapOcg) c += 'EMC\n';
   }
