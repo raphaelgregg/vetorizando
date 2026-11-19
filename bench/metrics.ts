@@ -8,6 +8,8 @@ export interface Metrics {
   hd95: number; // distância de Hausdorff (percentil 95) entre bordas, em px
   hdMax: number;
   chamfer: number; // distância média entre bordas, em px
+  deltaEEdge: number; // ΔE médio só nos pixels de borda (≤ 2 px de um contraste) → erro GEOMÉTRICO
+  deltaEFlat: number; // ΔE médio nas áreas planas → erro de COR (paleta/quantização)
 }
 
 /** Compõe sobre fundo branco e devolve RGB (3 canais). */
@@ -145,8 +147,25 @@ export function compare(orig: RawImage, rendered: RawImage): Metrics {
   } else if (hasA !== hasB) {
     hd95 = hdMax = chamfer = Math.hypot(w, h); // bordas de um lado só: pior caso (diagonal)
   }
+  // regiões: borda = vizinhança (≤ 2 px) de qualquer contraste forte no original OU no render
+  const near = new Uint8Array(n);
+  for (const m of [ea, eb]) {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!m[y * w + x]) continue;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < w && yy < h) near[yy * w + xx] = 1;
+        }
+      }
+    }
+  }
+  let se = 0, ne = 0, sf = 0, nf = 0;
+  for (let i = 0; i < n; i++) { if (near[i]) { se += de[i]; ne++; } else { sf += de[i]; nf++; } }
   return {
     ssim: ssim(A, B, w, h),
+    deltaEEdge: ne ? se / ne : 0,
+    deltaEFlat: nf ? sf / nf : 0,
     deltaE: sum / n,
     deltaEp95: percentile(sorted, 0.95),
     hd95,

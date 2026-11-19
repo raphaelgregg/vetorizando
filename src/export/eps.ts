@@ -22,15 +22,23 @@ export function toEPS(doc: VDoc, o: Options, size: ResolvedSize): string {
   s += `%%HiResBoundingBox: 0 0 ${fmt(size.widthPt)} ${fmt(size.heightPt)}\n`;
   s += '%%LanguageLevel: 3\n%%Pages: 1\n%%EndComments\n%%Page: 1 1\n';
   s += `gsave\n0 ${fmt(size.heightPt)} translate\n${fmt(k, 6)} ${fmt(-k, 6)} scale\n1 setlinejoin 1 setlinecap\n`;
+  const rgb = (hex: string) => rgbOf(hex).map((v) => fmt(v / 255, 4)).join(' ');
+  if (gap) {
+    // fendas: traços sob todos os preenchimentos; recortados pela união quando há bordas abertas
+    s += '%%Group: Preenchimento de fendas\ngsave\n';
+    if (doc.openBoundary) { s += 'newpath\n'; for (const l of doc.layers) for (const p of l.paths) s += pathOps(p); s += 'clip\n'; }
+    s += `${fmt(o.gapStrokeWidth, 4)} setlinewidth\n`;
+    for (const l of doc.layers) { s += `${rgb(l.color)} setrgbcolor\nnewpath\n`; for (const p of l.paths) s += pathOps(p); s += 'stroke\n'; }
+    s += 'grestore\n';
+  }
   for (const g of groupLayers(doc, o)) {
     if (g.name) s += `%%Group: ${g.name}\n`;
     for (const layer of g.layers) {
-      const [r, gg, b] = rgbOf(layer.color).map((v) => fmt(v / 255, 4));
-      s += `${r} ${gg} ${b} setrgbcolor\n`;
-      s += fill ? (gap ? `${fmt(o.gapStrokeWidth, 4)} setlinewidth\n` : '') : `${fmt(0.75 / k, 5)} setlinewidth\n`;
+      s += `${rgb(layer.color)} setrgbcolor\n`;
+      if (!fill) s += `${fmt(0.75 / k, 5)} setlinewidth\n`;
       s += 'newpath\n';
       for (const p of layer.paths) s += pathOps(p);
-      s += fill ? (gap ? 'gsave fill grestore stroke\n' : 'fill\n') : 'stroke\n';
+      s += fill ? 'fill\n' : 'stroke\n';
     }
   }
   s += 'grestore\nshowpage\n%%EOF\n';

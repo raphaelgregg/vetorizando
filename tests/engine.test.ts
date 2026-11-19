@@ -88,7 +88,8 @@ describe('vectorize', () => {
     expect(svg.startsWith('<svg')).toBe(true);
     expect(svg).toContain('viewBox="0 0 60 60"');
     expect(svg.trim().endsWith('</svg>')).toBe(true);
-    expect((svg.match(/<path/g) ?? []).length).toBe(2);
+    expect((svg.match(/<path/g) ?? []).length).toBe(4); // 2 camadas × (traço de fenda + preenchimento)
+    expect((svg.match(/<path fill=/g) ?? []).length).toBe(2);
     expect(svg).not.toContain('NaN');
   });
 

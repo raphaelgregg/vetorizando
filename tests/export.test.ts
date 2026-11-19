@@ -50,11 +50,12 @@ describe('SVG', () => {
     const s = str(e.data);
     expect(s).toContain('width="40mm" height="40mm"');
     expect(s).toContain('viewBox="0 0 512 512"');
-    expect((s.match(/inkscape:groupmode="layer"/g) ?? []).length).toBe(logoDoc.layers.length);
+    expect((s.match(/inkscape:groupmode="layer"/g) ?? []).length).toBe(logoDoc.layers.length + 1); // + camada de fendas
+    expect(s).toContain('inkscape:label="Preenchimento de fendas"');
   });
   it('agrupamento por cor gera <g> por cor; sem agrupamento não gera', () => {
     expect(str(exportDoc('svg', logoDoc, { ...logoOpts, groupBy: 'color' }, px, 512, 512).data)).toContain('<g id="cor-');
-    expect(str(exportDoc('svg', logoDoc, { ...logoOpts, groupBy: 'none' }, px, 512, 512).data)).not.toContain('<g ');
+    expect(str(exportDoc('svg', logoDoc, { ...logoOpts, groupBy: 'none', gapFiller: false }, px, 512, 512).data)).not.toContain('<g ');
   });
 });
 
@@ -74,8 +75,13 @@ describe('PDF', () => {
     const body = s.slice(s.indexOf('stream\n') + 7, s.indexOf('endstream'));
     expect(body.length).toBe(len);
   });
-  it('estilo: preenchimento+fendas usa B; sem fendas usa f; contornos usam S', () => {
-    expect(pdf({ gapFiller: true, stacking: 'cutouts', drawStyle: 'fill' })).toMatch(/\nB\n/);
+  it('estilo: fendas = traços (S) ANTES de todos os preenchimentos (f), sem B; contornos usam S', () => {
+    const g = pdf({ gapFiller: true, stacking: 'cutouts', drawStyle: 'fill' });
+    expect(g).not.toMatch(/\nB\n/);
+    expect(g.indexOf('\nS\n')).toBeGreaterThan(-1);
+    expect(g.indexOf('\nS\n')).toBeLessThan(g.indexOf('\nf\n')); // traços de fenda ficam abaixo
+    expect((g.match(/\nS\n/g) ?? []).length).toBe(logoDoc.layers.length);
+    expect(pdf({ gapFiller: false, drawStyle: 'fill' })).not.toMatch(/\nS\n/);
     expect(pdf({ gapFiller: false, drawStyle: 'fill' })).toMatch(/\nf\n/);
     const outline = pdf({ drawStyle: 'outline', gapFiller: false });
     expect(outline).toMatch(/\nS\n/);
@@ -84,8 +90,9 @@ describe('PDF', () => {
   it('agrupamento vira camadas opcionais (OCG) e muda a versão para 1.5', () => {
     const s = pdf({ groupBy: 'layer' });
     expect(s.startsWith('%PDF-1.5')).toBe(true);
-    expect((s.match(/\/Type \/OCG/g) ?? []).length).toBe(logoDoc.layers.length);
-    expect((s.match(/BDC/g) ?? []).length).toBe(logoDoc.layers.length);
+    expect((s.match(/\/Type \/OCG/g) ?? []).length).toBe(logoDoc.layers.length + 1); // + camada de fendas
+    expect((s.match(/BDC/g) ?? []).length).toBe(logoDoc.layers.length + 1);
+    expect(s).toContain('(Preenchimento de fendas)');
     expect(s).toContain('(Camada 1)');
     expect(pdf({ groupBy: 'color' })).toContain('(Cor ');
   });
@@ -140,7 +147,7 @@ function psBBox(ps: string) {
         case 'setlinewidth': case 'setlinejoin': case 'setlinecap': st.pop(); break;
         case 'fill': fills++; break;
         case 'stroke': strokes++; break;
-        case 'newpath': case 'closepath': case 'showpage': break;
+        case 'newpath': case 'closepath': case 'showpage': case 'clip': break;
         default: throw new Error(`operador PostScript inesperado: ${tok}`);
       }
     }
@@ -168,10 +175,14 @@ describe('EPS', () => {
     expect(r.maxLine).toBeLessThan(255);
   });
   it('estilos: fendas (gsave fill grestore stroke), contornos (stroke), agrupamento em comentários', () => {
-    expect(eps({ gapFiller: true })).toContain('gsave fill grestore stroke');
+    const gp = eps({ gapFiller: true });
+    expect(gp).not.toContain('gsave fill grestore stroke');
+    expect(gp.indexOf('stroke\n')).toBeLessThan(gp.indexOf('fill\n')); // fendas abaixo dos preenchimentos
+    expect(gp).toContain('%%Group: Preenchimento de fendas');
     const o = psBBox(eps({ drawStyle: 'outline', gapFiller: false }));
     expect(o.fills).toBe(0);
     expect(o.strokes).toBe(logoDoc.layers.length);
+    expect(psBBox(eps({ gapFiller: true })).strokes).toBe(logoDoc.layers.length); // 1 traço de fenda por camada
     expect(eps({ groupBy: 'layer' })).toContain('%%Group: Camada 1');
   });
   it('unidade em % e DPI: 50% de 512 px @ 72 dpi = 256 pt', () => {

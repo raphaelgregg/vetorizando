@@ -11,7 +11,7 @@ import { Metrics, compare, countSvgNodes } from './metrics';
 export const MAX_DIM = 1400; // mesmo limite de processamento da UI
 
 export interface Result { nodes: number; bytes: number; ms?: number; metrics: Metrics }
-export interface Thresholds { ssim?: number; deltaE?: number; hd95?: number; nodes?: number }
+export interface Thresholds { ssim?: number; deltaE?: number; hd95?: number; nodes?: number; deltaEEdge?: number; deltaEFlat?: number }
 export interface Row {
   id: string;
   source: 'builtin' | 'pair';
@@ -52,6 +52,8 @@ export function check(r: Result, t: Thresholds = {}): string[] {
   if (t.ssim !== undefined && m.ssim < t.ssim) f.push(`SSIM ${m.ssim.toFixed(4)} < ${t.ssim}`);
   if (t.deltaE !== undefined && m.deltaE > t.deltaE) f.push(`ΔE ${m.deltaE.toFixed(2)} > ${t.deltaE}`);
   if (t.hd95 !== undefined && m.hd95 > t.hd95) f.push(`HD95 ${m.hd95.toFixed(2)} > ${t.hd95}`);
+  if (t.deltaEEdge !== undefined && m.deltaEEdge > t.deltaEEdge) f.push(`ΔEborda ${m.deltaEEdge.toFixed(2)} > ${t.deltaEEdge}`);
+  if (t.deltaEFlat !== undefined && m.deltaEFlat > t.deltaEFlat) f.push(`ΔEplano ${m.deltaEFlat.toFixed(2)} > ${t.deltaEFlat}`);
   if (t.nodes !== undefined && r.nodes > t.nodes) f.push(`nós ${r.nodes} > ${t.nodes}`);
   return f;
 }
@@ -102,14 +104,14 @@ export function runPairs(dir: string, th: ThresholdFile, presetOverride?: string
 }
 
 export function formatTable(rows: Row[]): string {
-  const h = ['caso', 'preset', 'SSIM', 'ΔE', 'ΔE95', 'HD95', 'HDmax', 'nós', 'KB', 'ms', 'status'];
+  const h = ['caso', 'preset', 'SSIM', 'ΔE', 'ΔE95', 'HD95', 'HDmax', 'nós', 'KB', 'ms', 'ΔEborda', 'ΔEplano', 'status'];
   const lines = [h.join('\t')];
   for (const r of rows) {
     const m = r.ours.metrics;
-    lines.push([r.id, r.preset, m.ssim.toFixed(4), m.deltaE.toFixed(2), m.deltaEp95.toFixed(1), m.hd95.toFixed(2), m.hdMax.toFixed(1), r.ours.nodes, (r.ours.bytes / 1024).toFixed(1), Math.round(r.ours.ms ?? 0), r.failures.length ? 'FALHA: ' + r.failures.join('; ') : 'ok'].join('\t'));
+    lines.push([r.id, r.preset, m.ssim.toFixed(4), m.deltaE.toFixed(2), m.deltaEp95.toFixed(1), m.hd95.toFixed(2), m.hdMax.toFixed(1), r.ours.nodes, (r.ours.bytes / 1024).toFixed(1), Math.round(r.ours.ms ?? 0), m.deltaEEdge.toFixed(2), m.deltaEFlat.toFixed(2), r.failures.length ? 'FALHA: ' + r.failures.join('; ') : 'ok'].join('\t'));
     if (r.ref) {
       const q = r.ref.metrics;
-      lines.push([`  ↳ ref`, '', q.ssim.toFixed(4), q.deltaE.toFixed(2), q.deltaEp95.toFixed(1), q.hd95.toFixed(2), q.hdMax.toFixed(1), r.ref.nodes, (r.ref.bytes / 1024).toFixed(1), '', ''].join('\t'));
+      lines.push([`  ↳ ref`, '', q.ssim.toFixed(4), q.deltaE.toFixed(2), q.deltaEp95.toFixed(1), q.hd95.toFixed(2), q.hdMax.toFixed(1), r.ref.nodes, (r.ref.bytes / 1024).toFixed(1), '', q.deltaEEdge.toFixed(2), q.deltaEFlat.toFixed(2), ''].join('\t'));
     }
   }
   const pass = rows.filter((r) => !r.failures.length).length;

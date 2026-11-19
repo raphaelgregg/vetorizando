@@ -25,6 +25,8 @@ export interface VDoc {
   width: number; // dimensões do espaço de processamento
   height: number;
   layers: Layer[]; // ordem de desenho: fundo → frente
+  /** há bordas com “nada” (transparência/fundo removido): o preenchimento de fendas deve ser recortado pela união das regiões */
+  openBoundary: boolean;
   stats: {
     nodes: number; // nós finais (segmentos)
     paths: number;

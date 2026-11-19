@@ -77,5 +77,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   });
 
   progress(1, 'Pronto');
-  return { width: w, height: h, layers, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored } };
+  let transparent = false;
+  for (let i = 0; i < labels.length && !transparent; i++) if (labels[i] < 0) transparent = true;
+  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored } };
 }

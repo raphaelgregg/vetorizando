@@ -26,33 +26,46 @@ export function toPDF(doc: VDoc, o: Options, size: ResolvedSize): Uint8Array {
   const groups: Group[] = groupLayers(doc, o);
   const named = groups.filter((g) => g.name);
   const k = size.widthPt / doc.width; // doc → pontos
+  const gapOcg = gap && o.groupBy !== 'none' ? 1 : 0; // camada opcional extra para as fendas
+  const rgb = (hex: string) => rgbOf(hex).map((v) => fmt(v / 255, 4)) as [string, string, string];
   let c = `q\n${fmt(k, 6)} 0 0 ${fmt(-k, 6)} 0 ${fmt(size.heightPt)} cm\n1 j 1 J\n`;
+  if (gap) {
+    // fendas: traços sob todos os preenchimentos, recortados pela união quando há bordas abertas
+    if (gapOcg) c += '/OC /ocgap BDC\n';
+    c += 'q\n';
+    if (doc.openBoundary) { for (const l of doc.layers) for (const p of l.paths) c += pathOps(p); c += 'W n\n'; }
+    c += `${fmt(o.gapStrokeWidth, 4)} w\n`;
+    for (const l of doc.layers) { c += `${rgb(l.color).join(' ')} RG\n`; for (const p of l.paths) c += pathOps(p); c += 'S\n'; }
+    c += 'Q\n';
+    if (gapOcg) c += 'EMC\n';
+  }
   groups.forEach((g) => {
     const idx = named.indexOf(g);
     if (g.name) c += `/OC /oc${idx} BDC\n`;
     for (const layer of g.layers) {
-      const [r, gg, b] = rgbOf(layer.color).map((v) => fmt(v / 255, 4));
-      c += fill ? `${r} ${gg} ${b} rg\n` : `${r} ${gg} ${b} RG\n`;
-      if (gap) c += `${r} ${gg} ${b} RG\n${fmt(o.gapStrokeWidth, 4)} w\n`;
-      else if (!fill) c += `${fmt(STROKE_PT / k, 5)} w\n`;
+      const col = rgb(layer.color).join(' ');
+      c += fill ? `${col} rg\n` : `${col} RG\n${fmt(STROKE_PT / k, 5)} w\n`;
       for (const p of layer.paths) c += pathOps(p);
-      c += fill ? (gap ? 'B\n' : 'f\n') : 'S\n';
+      c += fill ? 'f\n' : 'S\n';
     }
     if (g.name) c += 'EMC\n';
   });
   c += 'Q\n';
 
   const ocgBase = 5;
+  const ocgs: { key: string; name: string }[] = [];
+  if (gapOcg) ocgs.push({ key: 'ocgap', name: 'Preenchimento de fendas' });
+  named.forEach((g, i) => ocgs.push({ key: `oc${i}`, name: g.name! }));
   const objs: string[] = [];
-  const refs = named.map((_, i) => `${ocgBase + i} 0 R`).join(' ');
-  objs.push(`<< /Type /Catalog /Pages 2 0 R${named.length ? ` /OCProperties << /OCGs [${refs}] /D << /Order [${refs}] /ON [${refs}] >> >>` : ''} >>`);
+  const refs = ocgs.map((_, i) => `${ocgBase + i} 0 R`).join(' ');
+  objs.push(`<< /Type /Catalog /Pages 2 0 R${ocgs.length ? ` /OCProperties << /OCGs [${refs}] /D << /Order [${refs}] /ON [${refs}] >> >>` : ''} >>`);
   objs.push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-  const props = named.length ? ` /Properties << ${named.map((_, i) => `/oc${i} ${ocgBase + i} 0 R`).join(' ')} >>` : '';
+  const props = ocgs.length ? ` /Properties << ${ocgs.map((g, i) => `/${g.key} ${ocgBase + i} 0 R`).join(' ')} >>` : '';
   objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${fmt(size.widthPt)} ${fmt(size.heightPt)}] /Contents 4 0 R /Resources << /ProcSet [/PDF]${props} >> >>`);
   objs.push(`<< /Length ${c.length} >>\nstream\n${c}endstream`);
-  named.forEach((g) => objs.push(`<< /Type /OCG /Name (${esc(g.name!)}) >>`));
+  ocgs.forEach((g) => objs.push(`<< /Type /OCG /Name (${esc(g.name)}) >>`));
 
-  let out = `%PDF-${named.length ? '1.5' : '1.4'}\n%\xE2\xE3\xCF\xD3\n`;
+  let out = `%PDF-${ocgs.length ? '1.5' : '1.4'}\n%\xE2\xE3\xCF\xD3\n`;
   const offsets: number[] = [];
   objs.forEach((body, i) => {
     offsets.push(out.length);
