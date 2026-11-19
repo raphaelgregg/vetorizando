@@ -2,6 +2,8 @@ import './style.css';
 import { PRESETS } from './engine/presets';
 import { toSVG } from './engine/svg';
 import type { Options, VDoc } from './engine/types';
+import { FORMATS, Format, exportDoc } from './export';
+import { SizeSpec, Unit, fmt as fnum, resolveSize, sizeInUnit } from './export/size';
 import { EngineClient } from './ui/client';
 import { Loaded, LoadError, loadFile } from './ui/loader';
 import { SAMPLES, renderSample, sampleToFile } from './ui/samples';
@@ -16,6 +18,8 @@ const state = {
   svg: '',
   options: { ...PRESETS[0].options } as Options,
   preset: 'logo' as string,
+  format: 'svg' as Format,
+  size: { unit: 'px', dpi: 96 } as SizeSpec,
 };
 
 const client = new EngineClient();
@@ -61,6 +65,8 @@ async function handleFile(file: File | null | undefined) {
     if (state.loaded) URL.revokeObjectURL(state.loaded.url);
     state.loaded = loaded;
     state.doc = null;
+    state.size = { unit: 'px', dpi: Number($<HTMLInputElement>('dpi').value) || 96 };
+    refreshSize();
     document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => (b.disabled = false));
     go(2);
     process();
@@ -126,7 +132,7 @@ function renderStats() {
     .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('')
     + `<span class="chip" title="Pontos de contorno antes do ajuste → nós finais">${st.rawPoints} pts → <b>${st.nodes}</b> nós (−${red}%)</span>`;
   const o = state.options;
-  $('summary').textContent = `${o.drawStyle === 'fill' ? 'Preenchido' : 'Contornos'} · ${o.stacking === 'stacked' ? 'Empilhado' : 'Recortes'} · Agrupar: ${o.groupBy === 'color' ? 'cor' : 'nenhum'} · Fenda: ${o.gapFiller && o.stacking === 'cutouts' && o.drawStyle === 'fill' ? 'ligado' : 'desligado'}`;
+  $('summary').textContent = `${o.drawStyle === 'fill' ? 'Preenchido' : 'Contornos'} · ${o.stacking === 'stacked' ? 'Empilhado' : 'Recortes'} · Agrupar: ${o.groupBy === 'color' ? 'cor' : o.groupBy === 'layer' ? 'camada' : 'nenhum'} · Fenda: ${o.gapFiller && o.stacking === 'cutouts' && o.drawStyle === 'fill' ? 'ligado' : 'desligado'}`;
 }
 
 // ---------- toolbar do estúdio ----------
@@ -169,7 +175,7 @@ const RANGES: [NumKey, string, number, number, number][] = [
 const SELECTS: [keyof Options, string, [string, string][]][] = [
   ['stacking', 'Empilhamento', [['cutouts', 'Recortes (sem sobreposição)'], ['stacked', 'Empilhado (camadas)']]],
   ['drawStyle', 'Estilo de desenho', [['fill', 'Preenchido'], ['outline', 'Contornos']]],
-  ['groupBy', 'Agrupar por', [['none', 'Sem agrupamento'], ['color', 'Cor']]],
+  ['groupBy', 'Agrupar por', [['none', 'Sem agrupamento'], ['color', 'Cor'], ['layer', 'Camada (ordem de empilhamento)']]],
 ];
 const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
 
@@ -210,12 +216,80 @@ function renderAdvanced() {
 renderPresets();
 renderAdvanced();
 
-// ---------- download ----------
+// ---------- formato, tamanho e download ----------
+const HINTS: Record<Format, string> = {
+  svg: 'Vetor para web e editores (Inkscape, Illustrator, Figma).',
+  pdf: 'Vetorial para impressão. Agrupar por cor/camada cria camadas opcionais (PDF 1.5).',
+  eps: 'PostScript nível 3 (EPSF‑3.0). Grupos ficam como comentários (PostScript não tem camadas).',
+  dxf: 'CAD/CNC: só contornos fechados (sem preenchimento), arcos nativos; Béziers viram polilinhas. Uma layer por grupo.',
+};
+
+function renderFormats() {
+  $('fmt').replaceChildren(...FORMATS.map((f) => {
+    const b = document.createElement('button');
+    b.textContent = f.label;
+    b.title = f.hint;
+    b.className = state.format === f.id ? 'on' : '';
+    b.addEventListener('click', () => { state.format = f.id; renderFormats(); });
+    return b;
+  }));
+  $('fmthint').textContent = HINTS[state.format];
+  $('download').textContent = `Baixar ${state.format.toUpperCase()}`;
+}
+
+function origDims() {
+  const l = state.loaded;
+  return { w: l?.origWidth ?? 1, h: l?.origHeight ?? 1 };
+}
+
+function refreshSize(skip?: 'w' | 'h') {
+  const { w, h } = origDims();
+  const r = resolveSize(state.size, w, h, w, h);
+  const pct = state.size.unit === '%';
+  if (skip !== 'w') $<HTMLInputElement>('sw').value = fnum(pct ? (state.size.width ?? 100) : r.width, 3);
+  if (skip !== 'h') $<HTMLInputElement>('sh').value = fnum(pct ? (state.size.width ?? 100) : r.height, 3);
+  $<HTMLInputElement>('sh').disabled = pct;
+  $<HTMLInputElement>('unit').value = state.size.unit;
+  $('sizeinfo').textContent = `Saída: ${fnum(r.width, 2)} × ${fnum(r.height, 2)} ${r.unit}` + (r.unit !== 'px' ? ` (${Math.round(r.width * (r.unit === 'mm' ? state.size.dpi / 25.4 : state.size.dpi / 2.54))} × ${Math.round(r.height * (r.unit === 'mm' ? state.size.dpi / 25.4 : state.size.dpi / 2.54))} px a ${state.size.dpi} dpi)` : '');
+}
+
+$('unit').addEventListener('change', () => {
+  const unit = $<HTMLSelectElement>('unit').value as Unit;
+  const { w, h } = origDims();
+  const d = sizeInUnit(unit, w, h, state.size.dpi);
+  state.size = { unit, dpi: state.size.dpi, width: unit === '%' ? 100 : d.width };
+  refreshSize();
+});
+$('dpi').addEventListener('input', () => {
+  const v = Number($<HTMLInputElement>('dpi').value);
+  if (!(v >= 36 && v <= 2400)) return;
+  state.size = { ...state.size, dpi: v };
+  refreshSize();
+});
+$('sw').addEventListener('input', () => {
+  const v = Number($<HTMLInputElement>('sw').value);
+  if (v > 0) { state.size = { ...state.size, width: v }; refreshSize('w'); }
+});
+$('sh').addEventListener('input', () => {
+  const v = Number($<HTMLInputElement>('sh').value);
+  const { w, h } = origDims();
+  if (v > 0) { state.size = { ...state.size, width: (v * w) / h }; refreshSize('h'); }
+});
+
 $('download').addEventListener('click', () => {
-  if (!state.svg || !state.loaded) return;
-  const url = URL.createObjectURL(new Blob([state.svg], { type: 'image/svg+xml' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: `${state.loaded.name}.svg` });
+  if (!state.doc || !state.loaded) return;
+  const { w, h } = origDims();
+  let e;
+  try {
+    e = exportDoc(state.format, state.doc, state.options, state.size, w, h);
+  } catch {
+    showMsg('Não foi possível gerar o arquivo neste formato.');
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([e.data as BlobPart], { type: e.mime }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: `${state.loaded.name}.${e.ext}` });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-
+renderFormats();
+refreshSize();

@@ -61,12 +61,18 @@
             <div id="adv" class="advgrid"></div>
           </details>
           <h2>Formato</h2>
-          <div class="seg fmt">
-            <button class="on">SVG</button>
-            <button disabled title="Em breve">PDF</button>
-            <button disabled title="Em breve">EPS</button>
-            <button disabled title="Em breve">DXF</button>
+          <div id="fmt" class="seg fmt" role="group" aria-label="Formato de saída"></div>
+          <p id="fmthint" class="summary"></p>
+          <h2>Tamanho</h2>
+          <div class="sizebox">
+            <label>Unidade
+              <select id="unit"><option value="px">px</option><option value="mm">mm</option><option value="cm">cm</option><option value="%">%</option></select>
+            </label>
+            <label>DPI <input id="dpi" type="number" min="36" max="2400" step="1" value="96" /></label>
+            <label>Largura <input id="sw" type="number" min="0.01" step="any" /></label>
+            <label>Altura <input id="sh" type="number" min="0.01" step="any" /></label>
           </div>
+          <p id="sizeinfo" class="summary"></p>
           <button id="download" class="primary big">Baixar SVG</button>
           <p id="summary" class="summary"></p>
         </div>

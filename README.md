@@ -19,6 +19,21 @@ npm run build      # typecheck + build estático em dist/
 - **UI** (`src/ui`, `src/main.ts`): upload por arrastar/clicar/`Ctrl+V` com validação, 4 exemplos em 1 clique, estúdio com **Antes/Depois deslizante**, zoom/pan (roda, arrastar, pinça, duplo clique), **Raio‑X** (nós e alças), presets, ajustes avançados recolhíveis com reprocessamento ao vivo, tema claro/escuro, download SVG.
 - **Testes**: 9 testes do motor (círculo, quadrado, anel com furo, fundo, transparência, empilhado, casos degenerados, SVG válido, determinismo) + verificação ponta a ponta no Chromium (fluxo completo, download, erro de formato, sem erros no console). CI em `.github/workflows/ci.yml`.
 
+## Exportação (SVG · PDF · EPS · DXF), unidades e DPI
+
+Todos os formatos derivam do mesmo modelo vetorial (`src/export`), respeitando **estilo de desenho** (preenchido/contorno), **empilhamento** (recortes/empilhado), **gap filler** e **agrupamento**.
+
+| Formato | Como é gerado | Agrupamento (cor / camada) |
+|---|---|---|
+| **SVG** | `path` com `M L C A`; `viewBox` + `width/height` na unidade escolhida | `<g>` por cor; por camada usa `inkscape:groupmode="layer"` |
+| **PDF** | PDF 1.4/1.5 escrito à mão, Béziers (arcos convertidos), `f` / `B` (fendas) / `S` (contorno) | camadas opcionais (**OCG**, PDF 1.5) |
+| **EPS** | PostScript nível 3, EPSF‑3.0 com `BoundingBox` | comentários `%%Group:` (PostScript não tem camadas) |
+| **DXF** | R12: `POLYLINE` fechada, **arcos nativos (bulge)**, retas exatas, Béziers achatadas (tolerância 0,02 mm); só contornos | uma **layer** por grupo, com cor ACI |
+
+**Tamanho:** `px`, `mm`, `cm` ou `%` (do original) + **DPI** (converte px ↔ medidas físicas; padrão 96). Informe largura **ou** altura — a proporção é sempre preservada. 1 pt = 1/72 pol; DXF usa a unidade escolhida com Y para cima.
+
+**Validação:** testes estruturais (xref do PDF, BoundingBox/geometria do EPS por mini‑interpretador, pares/entidades do DXF), PDF renderizado por `pdftoppm` (SSIM vs SVG ≥ 0,994) e DXF aberto/auditado com `ezdxf` (0 erros) nas verificações manuais.
+
 ## Benchmark de qualidade (`npm run bench`)
 
 Compara o **raster original** com o **SVG renderizado** (renderizador `resvg`, independente do nosso motor) usando:
@@ -48,7 +63,7 @@ Resultados atuais (SSIM / ΔE / HD95 px / nós): logo 0,990 / 0,28 / 1,0 / 76 ·
 1. **Texto/formas pequenas** ainda geram muitos nós (ruído de ±0,15 px no raster); falta arco elíptico e fusão pós-ajuste.
 2. **Degradês** viram bandas (limite da quantização por cores); foto SSIM ≈ 0,87.
 3. **Gap filler** hoje é traço por caminho (`paint-order`); falta validação automática de ausência de fendas.
-4. **Exportadores PDF / EPS / DXF**, **unidades (mm/cm/%)** e DPI: ainda não.
+4. **DXF** só em R12 (Béziers viram polilinhas; sem splines/hachuras); **EPS** sem camadas reais (grupos em comentários) e **sem validação em Ghostscript** (verificado por interpretador próprio de teste); PDF sem compressão.
 5. **Pares de referência reais** (imagem → SVG de outra ferramenta) ainda não foram adicionados a `bench/pairs/`.
 6. Imagens são reduzidas a 1400 px no lado maior no processamento; **Rust/WASM** para desempenho e precisão em imagens grandes.
 7. Editar paleta (trocar/mesclar cores) no estúdio; colar URL de imagem; i18n/en; testes E2E automatizados no CI.

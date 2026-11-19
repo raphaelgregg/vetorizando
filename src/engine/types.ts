@@ -45,7 +45,7 @@ export interface RawImage {
 
 export type Stacking = 'cutouts' | 'stacked';
 export type DrawStyle = 'fill' | 'outline';
-export type GroupBy = 'none' | 'color';
+export type GroupBy = 'none' | 'color' | 'layer';
 
 export interface Options {
   maxColors: number;

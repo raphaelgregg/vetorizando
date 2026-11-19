@@ -51,6 +51,21 @@ export function toCubicPath(p: VPath): { start: Pt; segs: ({ t: 'L'; p: Pt } | {
   return { start: p.start, segs };
 }
 
+/** Pontos (sem o inicial) que aproximam uma Bézier cúbica com erro ≤ tol. */
+export function flattenCubic(p0: Pt, c1: Pt, c2: Pt, p3: Pt, tol: number): Pt[] {
+  const m = Math.max(Math.hypot(p0.x - 2 * c1.x + c2.x, p0.y - 2 * c1.y + c2.y), Math.hypot(c1.x - 2 * c2.x + p3.x, c1.y - 2 * c2.y + p3.y));
+  const n = Math.min(200, Math.max(2, Math.ceil(Math.sqrt((0.75 * m) / tol))));
+  const out: Pt[] = [];
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, u = 1 - t;
+    out.push({
+      x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y,
+    });
+  }
+  return out;
+}
+
 /** Polilinha que aproxima o caminho com erro ≤ tol (sem repetir o ponto inicial no fim). */
 export function flattenPath(p: VPath, tol = 0.05): Pt[] {
   const pts: Pt[] = [p.start];
