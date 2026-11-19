@@ -10,6 +10,7 @@ export interface Metrics {
   chamfer: number; // distância média entre bordas, em px
   deltaEEdge: number; // ΔE médio só nos pixels de borda (≤ 2 px de um contraste) → erro GEOMÉTRICO
   deltaEFlat: number; // ΔE médio nas áreas planas → erro de COR (paleta/quantização)
+  errEdgeShare: number; // fração da massa total de ΔE que está nas bordas (1 = erro todo geométrico; 0 = todo de cor)
 }
 
 /** Compõe sobre fundo branco e devolve RGB (3 canais). */
@@ -166,6 +167,7 @@ export function compare(orig: RawImage, rendered: RawImage): Metrics {
     ssim: ssim(A, B, w, h),
     deltaEEdge: ne ? se / ne : 0,
     deltaEFlat: nf ? sf / nf : 0,
+    errEdgeShare: se + sf > 0 ? se / (se + sf) : 0,
     deltaE: sum / n,
     deltaEp95: percentile(sorted, 0.95),
     hd95,
@@ -189,4 +191,13 @@ export function countSvgNodes(svg: string): number {
   for (const m of svg.matchAll(/<(?:polygon|polyline)\b[^>]*?\spoints\s*=\s*"([^"]*)"/g)) nodes += Math.floor((m[1].match(/-?\d*\.?\d+/g) ?? []).length / 2);
   nodes += (svg.match(/<(?:rect|circle|ellipse)\b/g) ?? []).length * 4;
   return nodes;
+}
+
+/** ΔE (CIE76) por pixel entre duas imagens do mesmo tamanho (compostas sobre branco). */
+export function deltaEMap(orig: RawImage, rendered: RawImage): Float32Array {
+  const la = toLab(flatten(orig)), lb = toLab(flatten(rendered));
+  const n = orig.width * orig.height;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.hypot(la[i * 3] - lb[i * 3], la[i * 3 + 1] - lb[i * 3 + 1], la[i * 3 + 2] - lb[i * 3 + 2]);
+  return out;
 }

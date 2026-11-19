@@ -102,7 +102,8 @@ npm run bench -- --out out --json r.json --preset illustration
 ```
 
 - **Casos embutidos** (`bench/cases.ts`): logo, ícone, ilustração, foto/degradê, lineart, listras — gerados de fontes vetoriais com anti-aliasing, então reproduzíveis sem arquivos binários.
-- **Pares de referência** (`bench/pairs/`): coloque `nome.png|jpg` + opcional `nome.ref.svg` (SVG de outra ferramenta) e `nome.json` (preset/opções). O SVG de referência aparece numa linha `↳ ref` para comparação direta de SSIM/ΔE/HD/nós. Ver `bench/pairs/README.md`.
+- **Pares de referência** (`bench/pairs/`): coloque `nome.png|jpg` + opcional `nome.ref.svg` e `nome.json`, e rode `npm run bench -- --no-builtin --report --out out` (diagnóstico por par, imagem comparativa e ranking de margem de ganho); `--calibrate --write` grava os limites `pair:nome`. Erros de um par não derrubam os outros. Guia completo em `bench/pairs/README.md`.
+- **Estresse** (`npm run bench:stress`): degrada os casos embutidos (JPEG, ruído, suavização) e mede contra a entrada e contra a verdade limpa.
 - **Regressão**: `bench/thresholds.json` define limites por caso (SSIM, ΔE, ΔEborda, ΔEplano, HD95, nós); `npm test` falha se algum caso piorar; a taxa de sucesso é impressa no final. `npm run bench:calibrate` recalibra a partir dos resultados atuais (use só em melhorias intencionais; **nunca afrouxe um limite para fazer passar**).
 - **Calibrar com imagens reais**: ver o passo a passo em `bench/pairs/README.md` (`npm run bench -- --no-builtin --calibrate --write`).
 - Hausdorff só é significativo com bordas duras: em degradês a quantização cria “bandas” que o original não tem (por isso HD95 não é exigido em ilustração/foto).

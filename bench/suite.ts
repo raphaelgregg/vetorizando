@@ -5,21 +5,31 @@ import { toSVG } from '../src/engine/svg';
 import { DEFAULT_OPTIONS, Options, RawImage } from '../src/engine/types';
 import { vectorize } from '../src/engine/vectorize';
 import { CASES, rasterize } from './cases';
-import { readRaster, renderSvg } from './io';
+import { readRasterInfo, renderSvg } from './io';
 import { Metrics, compare, countSvgNodes } from './metrics';
 
 export const MAX_DIM = 1400; // mesmo limite de processamento da UI
 
 export interface Result { nodes: number; bytes: number; ms?: number; metrics: Metrics }
 export interface Thresholds { ssim?: number; deltaE?: number; hd95?: number; nodes?: number; deltaEEdge?: number; deltaEFlat?: number }
+export interface Issue { id: string; level: 'error' | 'warn'; message: string }
+
+/** Chave dos limites em thresholds.json: casos embutidos = `id`; pares = `pair:id` (evita colidir com os embutidos). */
+export const thresholdKey = (source: 'builtin' | 'pair', id: string) => (source === 'pair' ? `pair:${id}` : id);
+
 export interface Row {
   id: string;
+  key: string; // chave em thresholds.json
+  hasLimits: boolean;
+  warnings: string[];
   source: 'builtin' | 'pair';
   preset: string;
   width: number;
   height: number;
   ours: Result;
   ref?: Result; // resultado do SVG de referência (quando existir)
+  refRendered?: RawImage;
+  original?: RawImage; // raster (já reduzido) usado na comparação
   svg: string;
   rendered: RawImage;
   failures: string[];
@@ -58,7 +68,7 @@ export function check(r: Result, t: Thresholds = {}): string[] {
   return f;
 }
 
-export function evaluate(id: string, source: Row['source'], raster: RawImage, options: Options, presetId: string, refSvg: string | undefined, th: ThresholdFile): Row {
+export function evaluate(id: string, source: Row['source'], raster: RawImage, options: Options, presetId: string, refSvg: string | undefined, th: ThresholdFile, warnings: string[] = []): Row {
   const img = downscale(raster, MAX_DIM);
   let doc;
   const t0 = performance.now();
@@ -71,13 +81,33 @@ export function evaluate(id: string, source: Row['source'], raster: RawImage, op
   const svg = toSVG(doc, options);
   const rendered = renderSvg(svg, img.width);
   const ours: Result = { nodes: doc.stats.nodes, bytes: svg.length, ms, metrics: compare(img, rendered) };
-  const row: Row = { id, source, preset: presetId, width: img.width, height: img.height, ours, svg, rendered, failures: [] };
+  const key = thresholdKey(source, id);
+  const limits = { ...th.default, ...th.cases[key] };
+  const row: Row = { original: img, id, key, hasLimits: Object.keys(limits).length > 0, warnings, source, preset: presetId, width: img.width, height: img.height, ours, svg, rendered, failures: [] };
   if (refSvg) {
-    const refRender = renderSvg(refSvg, img.width);
-    if (refRender.height === img.height) row.ref = { nodes: countSvgNodes(refSvg), bytes: refSvg.length, metrics: compare(img, refRender) };
+    try {
+      let refRender = renderSvg(refSvg, img.width);
+      const dh = Math.abs(refRender.height - img.height);
+      if (dh > 2) {
+        warnings.push(`SVG de referência com proporção diferente da imagem (renderizado ${refRender.width}×${refRender.height}, imagem ${img.width}×${img.height}): ignorado. Exporte o ref com a mesma proporção.`);
+      } else {
+        if (dh > 0) refRender = fitHeight(refRender, img.height); // arredondamento de 1–2 px na altura
+        row.ref = { nodes: countSvgNodes(refSvg), bytes: refSvg.length, metrics: compare(img, refRender) };
+        row.refRendered = refRender;
+      }
+    } catch (e) {
+      warnings.push(`SVG de referência inválido (${e instanceof Error ? e.message.split('\n')[0] : e}): comparação com a referência ignorada.`);
+    }
   }
-  row.failures = check(ours, { ...th.default, ...th.cases[id] });
+  row.failures = check(ours, limits);
   return row;
+}
+
+/** Corta/preenche (transparente) para a altura pedida — só para diferenças de 1–2 px por arredondamento. */
+function fitHeight(img: RawImage, h: number): RawImage {
+  const data = new Uint8ClampedArray(img.width * h * 4);
+  data.set(img.data.subarray(0, Math.min(img.data.length, data.length)));
+  return { data, width: img.width, height: h };
 }
 
 export function runBuiltin(th: ThresholdFile, only?: string[]): Row[] {
@@ -86,19 +116,49 @@ export function runBuiltin(th: ThresholdFile, only?: string[]): Row[] {
   );
 }
 
-/** Pares de referência: `<nome>.png|jpg` + opcional `<nome>.ref.svg` e `<nome>.json` ({preset, options}). */
-export function runPairs(dir: string, th: ThresholdFile, presetOverride?: string): Row[] {
+/** Chaves aceitas em `nome.json` → options do motor. */
+const OPTION_KEYS = new Set(Object.keys(DEFAULT_OPTIONS));
+
+/**
+ * Pares de referência: `<nome>.png|jpg` + opcional `<nome>.ref.svg` e `<nome>.json` ({preset, options}).
+ * Um par com problema NÃO derruba os outros: o erro/aviso vai para `issues` e a execução continua.
+ */
+export function runPairs(dir: string, th: ThresholdFile, presetOverride?: string, issues: Issue[] = []): Row[] {
   if (!existsSync(dir)) return [];
   const rows: Row[] = [];
-  for (const f of readdirSync(dir).sort()) {
+  const files = readdirSync(dir).sort();
+  const images = new Set<string>();
+  for (const f of files) if (/\.(png|jpe?g)$/i.test(f)) images.add(parse(f).name);
+  for (const f of files) {
+    if (f === 'README.md' || /\.(png|jpe?g)$/i.test(f)) continue;
+    const ref = /^(.*)\.ref\.svg$/i.exec(f), cfg = /^(.*)\.json$/i.exec(f);
+    const base = ref?.[1] ?? cfg?.[1];
+    if (base !== undefined) { if (!images.has(base)) issues.push({ id: base, level: 'warn', message: `${f}: não há imagem ${base}.png/.jpg correspondente (arquivo ignorado)` }); }
+    else issues.push({ id: f, level: 'warn', message: `${f}: tipo não suportado (use PNG ou JPG; WebP/AVIF/GIF devem ser convertidos)` });
+  }
+  for (const f of files) {
     if (!/\.(png|jpe?g)$/i.test(f)) continue;
     const { name } = parse(f);
-    const refPath = join(dir, `${name}.ref.svg`), cfgPath = join(dir, `${name}.json`);
-    const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
-    const presetId = presetOverride ?? cfg.preset ?? 'logo';
-    const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0];
-    const options: Options = { ...DEFAULT_OPTIONS, ...preset.options, ...(cfg.options ?? {}) };
-    rows.push(evaluate(name, 'pair', readRaster(join(dir, f)), options, preset.id, existsSync(refPath) ? readFileSync(refPath, 'utf8') : undefined, th));
+    const warnings: string[] = [];
+    try {
+      const refPath = join(dir, `${name}.ref.svg`), cfgPath = join(dir, `${name}.json`);
+      let cfg: { preset?: string; options?: Record<string, unknown> } = {};
+      if (existsSync(cfgPath)) {
+        try { cfg = JSON.parse(readFileSync(cfgPath, 'utf8')); } catch (e) { throw new Error(`${name}.json inválido: ${e instanceof Error ? e.message : e}`); }
+      }
+      const presetId = presetOverride ?? cfg.preset ?? 'logo';
+      const preset = PRESETS.find((p) => p.id === presetId);
+      if (!preset) throw new Error(`preset desconhecido "${presetId}" (use: ${PRESETS.map((p) => p.id).join(', ')})`);
+      for (const k of Object.keys(cfg.options ?? {})) if (!OPTION_KEYS.has(k)) warnings.push(`${name}.json: opção desconhecida "${k}" (ignorada pelo motor)`);
+      const options: Options = { ...DEFAULT_OPTIONS, ...preset.options, ...(cfg.options ?? {}) } as Options;
+      let info;
+      try { info = readRasterInfo(join(dir, f)); } catch (e) { throw new Error(`não foi possível ler a imagem: ${e instanceof Error ? e.message : e}`); }
+      if (info.orientation > 1) warnings.push(`orientação EXIF ${info.orientation} aplicada (como a UI faz); o ref.svg deve estar na orientação exibida`);
+      rows.push(evaluate(name, 'pair', info.image, options, preset.id, existsSync(refPath) ? readFileSync(refPath, 'utf8') : undefined, th, warnings));
+    } catch (e) {
+      issues.push({ id: name, level: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+    for (const w of warnings) issues.push({ id: name, level: 'warn', message: w });
   }
   return rows;
 }
@@ -139,7 +199,7 @@ export function formatTable(rows: Row[]): string {
   const lines = [h.join('\t')];
   for (const r of rows) {
     const m = r.ours.metrics;
-    lines.push([r.id, r.preset, m.ssim.toFixed(4), m.deltaE.toFixed(2), m.deltaEp95.toFixed(1), m.hd95.toFixed(2), m.hdMax.toFixed(1), r.ours.nodes, (r.ours.bytes / 1024).toFixed(1), Math.round(r.ours.ms ?? 0), m.deltaEEdge.toFixed(2), m.deltaEFlat.toFixed(2), r.failures.length ? 'FALHA: ' + r.failures.join('; ') : 'ok'].join('\t'));
+    lines.push([r.id, r.preset, m.ssim.toFixed(4), m.deltaE.toFixed(2), m.deltaEp95.toFixed(1), m.hd95.toFixed(2), m.hdMax.toFixed(1), r.ours.nodes, (r.ours.bytes / 1024).toFixed(1), Math.round(r.ours.ms ?? 0), m.deltaEEdge.toFixed(2), m.deltaEFlat.toFixed(2), r.failures.length ? 'FALHA: ' + r.failures.join('; ') : r.hasLimits ? 'ok' : 'ok (sem limites: rode --calibrate --write)'].join('\t'));
     if (r.ref) {
       const q = r.ref.metrics;
       lines.push([`  ↳ ref`, '', q.ssim.toFixed(4), q.deltaE.toFixed(2), q.deltaEp95.toFixed(1), q.hd95.toFixed(2), q.hdMax.toFixed(1), r.ref.nodes, (r.ref.bytes / 1024).toFixed(1), '', q.deltaEEdge.toFixed(2), q.deltaEFlat.toFixed(2), ''].join('\t'));

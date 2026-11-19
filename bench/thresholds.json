@@ -1,5 +1,5 @@
 {
-  "_doc": "Limites de regressão FOCADOS EM FIDELIDADE, gerados por `npm run bench:calibrate` (margem fixa: SSIM −0,002; ΔE/ΔEborda/ΔEplano ×1,10 + folga; nós ×1,12 + 2). ΔEborda = erro geométrico (pixels a ≤ 2 px de um contraste); ΔEplano = erro de cor (áreas planas). HD95 só em imagens de bordas duras: em degradês a quantização cria bandas que o original não tem. Nunca afrouxe um limite para 'fazer passar': investigue a regressão.",
+  "_doc": "Limites de regressão FOCADOS EM FIDELIDADE, gerados por `npm run bench:calibrate` (margem fixa: SSIM −0,002; ΔE/ΔEborda/ΔEplano ×1,10 + folga; nós ×1,12 + 2). ΔEborda = erro geométrico (pixels a ≤ 2 px de um contraste); ΔEplano = erro de cor (áreas planas). HD95 só em imagens de bordas duras: em degradês a quantização cria bandas que o original não tem. Nunca afrouxe um limite para 'fazer passar': investigue a regressão. Pares reais usam a chave `pair:nome` (ver bench/pairs/README.md).",
   "default": {},
   "cases": {
     "logo": {

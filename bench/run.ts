@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { readFileSync, existsSync } from 'node:fs';
-import { formatTable, loadThresholds, mergeStricter, proposeThresholds, runBuiltin, runPairs, Row, ThresholdFile } from './suite';
+import { formatReport, comparePng } from './report';
+import { formatTable, Issue, loadThresholds, mergeStricter, proposeThresholds, runBuiltin, runPairs, Row, ThresholdFile } from './suite';
 
 const args = process.argv.slice(2);
 const opt = (name: string, def?: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : def; };
@@ -11,9 +12,13 @@ const flag = (name: string) => args.includes(`--${name}`);
 const th = loadThresholds(opt('thresholds', 'bench/thresholds.json')!);
 const rows: Row[] = [];
 if (!flag('no-builtin')) rows.push(...runBuiltin(th, opt('cases')?.split(',')));
-rows.push(...runPairs(opt('pairs', 'bench/pairs')!, th, opt('preset')));
+const issues: Issue[] = [];
+rows.push(...runPairs(opt('pairs', 'bench/pairs')!, th, opt('preset'), issues));
 
 console.log(formatTable(rows));
+for (const i of issues) console.log(`${i.level === 'error' ? 'ERRO' : 'aviso'} [${i.id}]: ${i.message}`);
+const errors = issues.filter((i) => i.level === 'error');
+if (flag('report')) console.log(formatReport(rows));
 
 const out = opt('out');
 if (out) {
@@ -23,12 +28,13 @@ if (out) {
     const png = new PNG({ width: r.rendered.width, height: r.rendered.height });
     png.data = Buffer.from(r.rendered.data);
     writeFileSync(join(out, `${r.id}.render.png`), PNG.sync.write(png));
+    writeFileSync(join(out, `${r.id}.compare.png`), comparePng(r));
   }
 }
 const thPath = opt('thresholds', 'bench/thresholds.json')!;
 if (flag('calibrate')) {
   // propõe (e com --write grava) limites por caso a partir dos resultados desta execução
-  const proposed = Object.fromEntries(rows.map((r) => [r.id, proposeThresholds(r)]));
+  const proposed = Object.fromEntries(rows.map((r) => [r.key, proposeThresholds(r)]));
   console.log('\nLimites propostos:\n' + JSON.stringify(proposed, null, 2));
   if (flag('write')) {
     const file: ThresholdFile & Record<string, unknown> = existsSync(thPath) ? JSON.parse(readFileSync(thPath, 'utf8')) : { default: {}, cases: {} };
@@ -37,8 +43,8 @@ if (flag('calibrate')) {
     writeFileSync(thPath, JSON.stringify(file, null, 2) + '\n');
     console.log(`\nGravado em ${thPath} (${rows.length} casos; ${flag('loosen') ? 'pode afrouxar' : 'só aperta'}).`);
   } else console.log('\n(use --write para gravar em ' + thPath + ')');
-  process.exit(0);
+  process.exit(errors.length && !flag('no-fail') ? 1 : 0);
 }
 const json = opt('json');
 if (json) writeFileSync(json, JSON.stringify(rows.map(({ svg: _s, rendered: _r, ...rest }) => rest), null, 2));
-process.exit(rows.some((r) => r.failures.length) && !flag('no-fail') ? 1 : 0);
+process.exit((rows.some((r) => r.failures.length) || errors.length) && !flag('no-fail') ? 1 : 0);
