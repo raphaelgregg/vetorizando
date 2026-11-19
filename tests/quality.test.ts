@@ -37,7 +37,7 @@ describe('qualidade de curvas e bordas', () => {
   it('métricas antes/depois: pontos de contorno ≫ nós', () => {
     const s = run('icon').stats;
     expect(s.rawPoints).toBeGreaterThan(s.nodes * 20);
-    expect(s.lines + s.arcs + s.curves).toBe(s.nodes);
+    expect(s.lines + s.arcs + s.ellipses + s.curves).toBe(s.nodes);
   });
 
   it('desligar arcos remove segmentos de arco', () => {

@@ -1,12 +1,52 @@
 {
-  "_doc": "Limites de regressão (medidos em 2026-11 com margem). HD95 só em casos de bordas duras: em degradês a quantização cria bandas que o original não tem.",
+  "_doc": "Limites de regressão (medidos com margem; atualizados após arcos elípticos e redução de nós). HD95 só em casos de bordas duras: em degradês a quantização cria bandas que o original não tem.",
   "default": {},
   "cases": {
-    "logo":         { "ssim": 0.98, "deltaE": 0.6, "hd95": 1.5, "nodes": 110 },
-    "icon":         { "ssim": 0.98, "deltaE": 0.7, "hd95": 1.5, "nodes": 80 },
-    "illustration": { "ssim": 0.95, "deltaE": 2.5, "nodes": 300 },
-    "photo":        { "ssim": 0.85, "deltaE": 6.5, "nodes": 5000 },
-    "lineart":      { "ssim": 0.97, "deltaE": 0.8, "hd95": 1.5, "nodes": 170 },
-    "stripes":      { "ssim": 0.98, "deltaE": 0.6, "hd95": 1.5, "nodes": 45 }
+    "logo": {
+      "ssim": 0.98,
+      "deltaE": 0.6,
+      "hd95": 1.5,
+      "nodes": 85
+    },
+    "icon": {
+      "ssim": 0.98,
+      "deltaE": 0.7,
+      "hd95": 1.5,
+      "nodes": 55
+    },
+    "illustration": {
+      "ssim": 0.95,
+      "deltaE": 2.5,
+      "nodes": 260
+    },
+    "photo": {
+      "ssim": 0.85,
+      "deltaE": 6.5,
+      "nodes": 4000
+    },
+    "lineart": {
+      "ssim": 0.97,
+      "deltaE": 0.8,
+      "hd95": 1.5,
+      "nodes": 100
+    },
+    "stripes": {
+      "ssim": 0.98,
+      "deltaE": 0.6,
+      "hd95": 1.5,
+      "nodes": 40
+    },
+    "text": {
+      "ssim": 0.97,
+      "deltaE": 1.0,
+      "hd95": 1.5,
+      "nodes": 720
+    },
+    "ellipses": {
+      "ssim": 0.985,
+      "deltaE": 0.7,
+      "hd95": 1.5,
+      "nodes": 55
+    }
   }
 }

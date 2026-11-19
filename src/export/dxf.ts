@@ -1,4 +1,4 @@
-import { flattenCubic } from '../engine/geom';
+import { arcToCubics, flattenCubic } from '../engine/geom';
 import type { Options, Pt, VDoc, VPath } from '../engine/types';
 import { groupLayers, rgbOf } from './groups';
 import { ResolvedSize, fmt } from './size';
@@ -43,6 +43,10 @@ function toVertices(p: VPath, tol: number): Vertex[] {
       const ang = s.large ? 2 * Math.PI - 2 * half : 2 * half;
       v[v.length - 1].bulge = (s.sweep ? -1 : 1) * Math.tan(ang / 4);
       v.push({ p: s.p, bulge: 0 });
+    } else if (s.t === 'E') {
+      // R12 não tem elipse: achata o arco elíptico (via Béziers) com a tolerância de saída
+      let from = cur;
+      for (const c of arcToCubics(cur, s)) { for (const q of flattenCubic(from, c.c1, c.c2, c.p, tol)) v.push({ p: q, bulge: 0 }); from = c.p; }
     } else {
       for (const q of flattenCubic(cur, s.c1, s.c2, s.p, tol)) v.push({ p: q, bulge: 0 });
     }

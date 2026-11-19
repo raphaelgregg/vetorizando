@@ -15,9 +15,17 @@ npm run build      # typecheck + build estático em dist/
 
 ## O que já existe no v0.1
 
-- **Motor** (`src/engine`): quantização k-means++ em CIE Lab com mescla de tons, remoção de manchas, contornos pelas bordas dos pixels (com furos), detecção de cantos, suavização de degraus, ajuste de **retas e Béziers cúbicas** (Schneider) com `lineFitTolerance`, modos **cut-outs/stacked**, **gap filler** por traço, remoção de fundo, exportação **SVG** (agrupamento por cor, estilo preenchido/contorno), 4 presets. Roda em Web Worker (nova execução cancela a anterior).
+- **Motor** (`src/engine`): quantização k-means++ em CIE Lab com mescla de tons, remoção de manchas, contornos pelas bordas dos pixels (com furos), contornos **subpixel** a partir da cobertura de anti-aliasing, detecção de cantos multi-escala com **refino por interseção de retas**, ajuste guloso de **retas, arcos circulares, arcos elípticos e Béziers cúbicas** com continuidade G1 e `lineFitTolerance`, modos **cut-outs/stacked**, **gap filler** por traço, remoção de fundo, exportação **SVG** (agrupamento por cor, estilo preenchido/contorno), 4 presets. Roda em Web Worker (nova execução cancela a anterior).
 - **UI** (`src/ui`, `src/main.ts`): upload por arrastar/clicar/`Ctrl+V` com validação, 4 exemplos em 1 clique, estúdio com **Antes/Depois deslizante**, zoom/pan (roda, arrastar, pinça, duplo clique), **Raio‑X** (nós e alças), presets, ajustes avançados recolhíveis com reprocessamento ao vivo, tema claro/escuro, download SVG.
 - **Testes**: 9 testes do motor (círculo, quadrado, anel com furo, fundo, transparência, empilhado, casos degenerados, SVG válido, determinismo) + verificação ponta a ponta no Chromium (fluxo completo, download, erro de formato, sem erros no console). CI em `.github/workflows/ci.yml`.
+
+## Motor: como reduzimos nós sem perder precisão
+
+1. **Clusters de mistura**: o k‑means cria cores intermediárias de anti-aliasing; elas são detectadas (pequenas e explicáveis como mistura de duas outras) e removidas, e cada pixel de borda recebe a **cobertura** de cada cor (sRGB) → contorno subpixel (marching squares sobre o campo de cobertura).
+2. **Cantos**: ângulo em duas escalas (k e 2k) sobre pontos levemente suavizados (num canto o ângulo persiste; numa curva ele dobra) e **refino do vértice** pela interseção das retas ajustadas (TLS) → vértices a < 0,7 px do verdadeiro e fronteiras compartilhadas sem fenda entre regiões.
+3. **Primitivas**: a cada passo estende-se o trecho o máximo possível com reta, **arco circular**, **arco elíptico** (Halir–Flusser + extremos exatos, validado por distância geométrica) ou Bézier cúbica; micro-segmentos (< 0,75 px) são absorvidos.
+4. **Suavização adaptativa**: a janela da média móvel é limitada pelo tamanho do contorno (formas pequenas/texto não são encolhidas).
+5. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
 
 ## Exportação (SVG · PDF · EPS · DXF), unidades e DPI
 
@@ -56,11 +64,11 @@ npm run bench -- --out out --json r.json --preset illustration
 - **Regressão**: `bench/thresholds.json` define limites por caso; `npm test` falha se algum caso piorar; a taxa de sucesso é impressa no final.
 - Hausdorff só é significativo com bordas duras: em degradês a quantização cria “bandas” que o original não tem (por isso HD95 não é exigido em ilustração/foto).
 
-Resultados atuais (SSIM / ΔE / HD95 px / nós): logo 0,990 / 0,28 / 1,0 / 76 · ícone 0,992 / 0,37 / 1,0 / 51 · lineart 0,988 / 0,44 / 1,0 / 125 · listras 0,992 / 0,28 / 0 / 32 · ilustração 0,967 / 1,80 / – / 220 · foto 0,870 / 5,28 / – / 3690.
+Resultados atuais (SSIM / ΔE / HD95 px / nós): logo 0,989 / 0,31 / 1,0 / 68 · ícone 0,992 / 0,42 / 1,0 / 44 · lineart 0,983 / 0,55 / 1,0 / 68 · **texto** 0,990 / 0,46 / 1,0 / 646 · **elipses** 0,992 / 0,53 / 1,0 / 47 · listras 0,993 / 0,23 / 1,0 / 33 · ilustração 0,969 / 1,81 / – / 222 · foto 0,871 / 5,28 / – / 3234.
 
 ## Lacunas conhecidas (próximas iterações)
 
-1. **Texto/formas pequenas** ainda geram muitos nós (ruído de ±0,15 px no raster); falta arco elíptico e fusão pós-ajuste.
+1. **Texto** ainda usa ~9–10 nós por glifo (aprox. no piso para tolerância 0,5 px); retângulos arredondados saem como Béziers em vez de `L`+`A` (menos nós, mas menos “semânticos”); fusão pós-ajuste entre primitivas vizinhas ainda não existe.
 2. **Degradês** viram bandas (limite da quantização por cores); foto SSIM ≈ 0,87.
 3. **Gap filler** hoje é traço por caminho (`paint-order`); falta validação automática de ausência de fendas.
 4. **DXF** só em R12 (Béziers viram polilinhas; sem splines/hachuras); **EPS** sem camadas reais (grupos em comentários) e **sem validação em Ghostscript** (verificado por interpretador próprio de teste); PDF sem compressão.

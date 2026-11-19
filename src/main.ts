@@ -128,7 +128,7 @@ function renderStats() {
   const d = state.doc!;
   const st = d.stats;
   const red = st.rawPoints ? Math.round((1 - st.nodes / st.rawPoints) * 100) : 0;
-  $('stats').innerHTML = [['nós', st.nodes], ['retas', st.lines], ['arcos', st.arcs], ['curvas', st.curves], ['caminhos', st.paths], ['cores', st.colors]]
+  $('stats').innerHTML = [['nós', st.nodes], ['retas', st.lines], ['arcos', st.arcs], ['elipses', st.ellipses], ['curvas', st.curves], ['caminhos', st.paths], ['cores', st.colors]]
     .map(([k, v]) => `<span class="chip"><b>${v}</b> ${k}</span>`).join('')
     + `<span class="chip" title="Pontos de contorno antes do ajuste → nós finais">${st.rawPoints} pts → <b>${st.nodes}</b> nós (−${red}%)</span>`;
   const o = state.options;
@@ -145,6 +145,7 @@ $('wire').addEventListener('click', (e) => {
   const on = b.getAttribute('aria-pressed') !== 'true';
   b.setAttribute('aria-pressed', String(on));
   viewer.setWire(on);
+  $('legend').hidden = !on;
 });
 $('zin').addEventListener('click', () => viewer.zoomBy(1.4));
 $('zout').addEventListener('click', () => viewer.zoomBy(1 / 1.4));
@@ -177,7 +178,7 @@ const SELECTS: [keyof Options, string, [string, string][]][] = [
   ['drawStyle', 'Estilo de desenho', [['fill', 'Preenchido'], ['outline', 'Contornos']]],
   ['groupBy', 'Agrupar por', [['none', 'Sem agrupamento'], ['color', 'Cor'], ['layer', 'Camada (ordem de empilhamento)']]],
 ];
-const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
+const CHECKS: [keyof Options, string][] = [['arcs', 'Ajustar arcos circulares'], ['ellipses', 'Ajustar arcos elípticos'], ['gapFiller', 'Preencher fendas (gap filler)'], ['removeBackground', 'Remover fundo']];
 
 function renderAdvanced() {
   const box = $('adv');

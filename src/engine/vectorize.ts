@@ -47,7 +47,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   // ordem de desenho: maiores primeiro (fundo → frente)
   const order = palette.map((_, i) => i).filter((c) => area[c] > 0 && c !== bg).sort((a, b) => area[b] - area[a]);
   const layers: Layer[] = [];
-  let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, curves = 0;
+  let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0;
   const minLoop = Math.max(2, o.speckle / 4);
 
   order.forEach((c, rank) => {
@@ -66,10 +66,10 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     const layer: Layer = { color: hex(...palette[c]), paths: [] };
     for (const loop of traceField(mask, w, h, o.contourBlur, cover)) {
       if (Math.abs(loopArea(loop)) < minLoop) continue;
-      const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs });
+      const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs, ellipses: o.ellipses });
       rawPoints += loop.length;
       nodes += path.segs.length;
-      for (const sg of path.segs) { if (sg.t === 'L') lines++; else if (sg.t === 'A') arcs++; else curves++; }
+      for (const sg of path.segs) { if (sg.t === 'L') lines++; else if (sg.t === 'A') arcs++; else if (sg.t === 'E') ellipses++; else curves++; }
       paths++;
       layer.paths.push(path);
     }
@@ -77,5 +77,5 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   });
 
   progress(1, 'Pronto');
-  return { width: w, height: h, layers, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, curves, recolored } };
+  return { width: w, height: h, layers, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored } };
 }

@@ -11,6 +11,23 @@ const S = 512;
 const wrap = (body: string, bg = '#ffffff') =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">${bg ? `<rect width="${S}" height="${S}" fill="${bg}"/>` : ''}${body}</svg>`;
 
+
+/** Glifos desenhados à mão (traços arredondados ≈ texto pequeno de ~28 px); independentes de fontes do sistema. */
+const GLYPH: Record<string, string> = {
+  O: '<ellipse cx="10" cy="14" rx="8" ry="12"/>',
+  S: '<path d="M17 5C15 1 4 1 4 7C4 13 17 13 17 20C17 27 4 28 2 23"/>',
+  R: '<path d="M3 27V2H11C19 2 19 14 11 14H3M10 14L18 27"/>',
+  e: '<path d="M3 15H17C17 5 3 5 3 15C3 25 14 27 17 21"/>',
+  a: '<ellipse cx="9" cy="17" rx="6" ry="7"/><path d="M15 10V27"/>',
+  t: '<path d="M9 3V22C9 27 13 27 15 26M3 10H15"/>',
+  n: '<path d="M3 27V10M3 14C5 8 16 8 16 16V27"/>',
+  i: '<path d="M10 11V27"/><circle cx="10" cy="4" r="1.6"/>',
+  o: '<ellipse cx="10" cy="18" rx="7" ry="8"/>',
+  s: '<path d="M16 12C14 8 5 8 5 13C5 18 16 17 16 23C16 28 6 28 4 24"/>',
+};
+const textLine = (txt: string, x: number, y: number, pitch = 26) =>
+  [...txt].map((ch, i) => (GLYPH[ch] ? `<g transform="translate(${x + i * pitch} ${y})">${GLYPH[ch]}</g>` : '')).join('');
+
 export const CASES: BenchCase[] = [
   {
     id: 'logo', preset: 'logo',
@@ -42,6 +59,18 @@ export const CASES: BenchCase[] = [
     id: 'lineart', preset: 'logo',
     svg: wrap(`<g fill="none" stroke="#111" stroke-width="7" stroke-linecap="round"><circle cx="256" cy="256" r="170"/>
       <path d="M120 300C180 200 330 400 392 212"/><path d="M150 150L362 150L256 360Z"/></g>`),
+  },
+  {
+    id: 'text', preset: 'logo',
+    svg: wrap(`<g fill="none" stroke="#151515" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      ${textLine('Resonates', 30, 40)}${textLine('Origin tens', 30, 120)}${textLine('Rotas Soninos', 30, 200, 24)}${textLine('Seis notas', 30, 280)}${textLine('onesti ose', 30, 360)}</g>`),
+  },
+  {
+    id: 'ellipses', preset: 'logo',
+    svg: wrap(`<ellipse cx="170" cy="170" rx="120" ry="60" transform="rotate(-30 170 170)" fill="#d62839"/>
+      <ellipse cx="340" cy="330" rx="130" ry="52" transform="rotate(35 340 330)" fill="none" stroke="#1f6feb" stroke-width="26"/>
+      <ellipse cx="120" cy="400" rx="70" ry="38" fill="#2a9d8f"/><rect x="300" y="60" width="150" height="100" rx="46" fill="#ffb703"/>
+      <circle cx="420" cy="440" r="22" fill="#6d5efc"/>`),
   },
   {
     id: 'stripes', preset: 'logo',

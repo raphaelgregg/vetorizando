@@ -106,7 +106,7 @@ export class Viewer {
             handles += `M${cur.x} ${cur.y}L${s.c1.x} ${s.c1.y}M${s.p.x} ${s.p.y}L${s.c2.x} ${s.c2.y}`;
             ctrls += `<circle class="c" cx="${s.c1.x}" cy="${s.c1.y}"/><circle class="c" cx="${s.c2.x}" cy="${s.c2.y}"/>`;
           }
-          nodes += `<circle class="n" cx="${s.p.x}" cy="${s.p.y}"/>`;
+          nodes += `<circle class="n t${s.t}" cx="${s.p.x}" cy="${s.p.y}"/>`;
           cur = s.p;
         }
       }
