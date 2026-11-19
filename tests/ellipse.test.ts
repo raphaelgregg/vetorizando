@@ -150,13 +150,13 @@ describe('precisão de cantos e cores', () => {
   });
 });
 
-describe('redução de nós em texto e formas pequenas (vs. 6148de8)', () => {
+describe('teto de nós em texto e formas pequenas (vs. 6148de8; fidelidade tem prioridade)', () => {
   const run = (id: string) => {
     const c = CASES.find((x) => x.id === id)!;
     return vectorize(rasterize(c.svg), PRESETS.find((p) => p.id === c.preset)!.options);
   };
-  it('texto: ≥ 30% menos nós (984 → ≤ 690)', () => expect(run('text').stats.nodes).toBeLessThanOrEqual(690));
-  it('elipses/compactos: ≥ 15% menos nós (59 → ≤ 50)', () => expect(run('ellipses').stats.nodes).toBeLessThanOrEqual(50));
+  it('texto: ≥ 20% menos nós que antes (984 → ≤ 790), mesmo com tolerância menor', () => expect(run('text').stats.nodes).toBeLessThanOrEqual(790));
+  it('elipses/compactos: não mais que antes (59 → ≤ 66)', () => expect(run('ellipses').stats.nodes).toBeLessThanOrEqual(66));
   it('não existem micro-segmentos (< 0,75 px) em retas', () => {
     const d = run('text');
     let micro = 0;

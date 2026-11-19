@@ -7,7 +7,7 @@ import { removeSpeckles } from './segment';
 import type { Layer, Options, ProgressFn, RawImage, VDoc } from './types';
 
 /** Pipeline principal: quantização → segmentação → contornos → curvas → camadas. */
-export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () => {}): VDoc {
+export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () => {}, internal: { merge?: boolean } = {}): VDoc {
   const t0 = performance.now();
   const { width: w, height: h } = img;
   progress(0.02, 'Quantizando cores');
@@ -27,7 +27,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     acc.forEach((a, c) => { if (a[3]) palette[c] = [a[0] / a[3], a[1] / a[3], a[2] / a[3]]; });
   }
   progress(0.2, 'Limpando ruído');
-  removeSpeckles(labels, w, h, o.speckle);
+  removeSpeckles(labels, w, h, o.speckle, palette.map((c) => rgbToLab(...c)));
 
   // áreas e fundo (cor dominante nas bordas)
   const area = new Float64Array(palette.length);
@@ -48,7 +48,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   const order = palette.map((_, i) => i).filter((c) => area[c] > 0 && c !== bg).sort((a, b) => area[b] - area[a]);
   const layers: Layer[] = [];
   let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0;
-  const minLoop = Math.max(2, o.speckle / 4);
+  const minLoop = Math.max(1, o.speckle / 6);
 
   order.forEach((c, rank) => {
     progress(0.25 + (0.7 * rank) / Math.max(1, order.length), `Traçando cor ${rank + 1}/${order.length}`);
@@ -66,7 +66,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     const layer: Layer = { color: hex(...palette[c]), paths: [] };
     for (const loop of traceField(mask, w, h, o.contourBlur, cover)) {
       if (Math.abs(loopArea(loop)) < minLoop) continue;
-      const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs, ellipses: o.ellipses });
+      const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs, ellipses: o.ellipses, merge: internal.merge });
       rawPoints += loop.length;
       nodes += path.segs.length;
       for (const sg of path.segs) { if (sg.t === 'L') lines++; else if (sg.t === 'A') arcs++; else if (sg.t === 'E') ellipses++; else curves++; }

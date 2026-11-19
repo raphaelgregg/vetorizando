@@ -80,7 +80,7 @@ export function resolveTransitions(img: RawImage, labels: Int16Array, palette: L
   }
   const mix = new Uint8Array(n);
   let kept = n;
-  for (let m = 0; m < n; m++) if (tot[m] > 0 && kept > 2 && expl[m] / tot[m] >= 0.7 && tot[m] <= 0.015 * opaque) { mix[m] = 1; kept--; }
+  for (let m = 0; m < n; m++) if (tot[m] > 0 && kept > 2 && expl[m] / tot[m] >= 0.5 && tot[m] <= 0.015 * opaque) { mix[m] = 1; kept--; }
 
   // 2–3) cobertura e realocação
   const found = new Map<number, [number, number, number]>();
@@ -107,7 +107,9 @@ export function resolveTransitions(img: RawImage, labels: Int16Array, palette: L
           }
         }
         if (ba < 0) {
-          if (!own) { // sem par que explique: vai para a vizinha de cor mais próxima
+          // cluster de mistura sem par que explique: com ≥ 2 cores vizinhas vai para a mais próxima (franja de AA);
+          // com uma só vizinha é tinta isolada (linha fina) e permanece
+          if (!own && nb.length >= 2) {
             let bl = nb[0], bd = Infinity;
             for (const l of nb) { const d = dist2(lab, palette[l]); if (d < bd) { bd = d; bl = l; } }
             labels[i] = bl; any = true;

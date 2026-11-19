@@ -82,7 +82,7 @@ export function evaluate(id: string, source: Row['source'], raster: RawImage, op
 
 export function runBuiltin(th: ThresholdFile, only?: string[]): Row[] {
   return CASES.filter((c) => !only || only.includes(c.id)).map((c) =>
-    evaluate(c.id, 'builtin', rasterize(c.svg), PRESETS.find((p) => p.id === c.preset)!.options, c.preset, undefined, th),
+    evaluate(c.id, 'builtin', rasterize(c.svg), { ...PRESETS.find((p) => p.id === c.preset)!.options, ...c.options }, c.preset, undefined, th),
   );
 }
 
@@ -101,6 +101,25 @@ export function runPairs(dir: string, th: ThresholdFile, presetOverride?: string
     rows.push(evaluate(name, 'pair', readRaster(join(dir, f)), options, preset.id, existsSync(refPath) ? readFileSync(refPath, 'utf8') : undefined, th));
   }
   return rows;
+}
+
+/**
+ * Limites propostos a partir do resultado medido (com folga pequena e FIXA):
+ * SSIM −0,002 · ΔE ×1,10 + 0,03 · ΔEborda ×1,10 + 0,15 · ΔEplano ×1,10 + 0,05 · nós ×1,12 + 2.
+ * HD95 só entra em imagens de bordas duras (≤ 5 px): em degradês a quantização cria bandas que o original não tem.
+ */
+export function proposeThresholds(r: Row): Thresholds {
+  const m = r.ours.metrics;
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const t: Thresholds = {
+    ssim: Math.floor((m.ssim - 0.002) * 1000) / 1000,
+    deltaE: r2(m.deltaE * 1.1 + 0.03),
+    deltaEEdge: r2(m.deltaEEdge * 1.1 + 0.15),
+    deltaEFlat: r2(m.deltaEFlat * 1.1 + 0.05),
+    nodes: Math.ceil(r.ours.nodes * 1.12) + 2,
+  };
+  if (m.hd95 <= 5) t.hd95 = Math.max(1.5, Math.round((m.hd95 + 0.5) * 10) / 10);
+  return t;
 }
 
 export function formatTable(rows: Row[]): string {

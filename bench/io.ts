@@ -3,6 +3,7 @@ import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import { Resvg } from '@resvg/resvg-js';
 import type { RawImage } from '../src/engine/types';
+import { unpremultiply } from './pixels';
 
 /** Decodifica PNG/JPG para RGBA. */
 export function readRaster(path: string): RawImage {
@@ -21,5 +22,5 @@ export function readRaster(path: string): RawImage {
 /** Renderiza um SVG qualquer na largura pedida, com transparência preservada. */
 export function renderSvg(svg: string, width: number): RawImage {
   const r = new Resvg(svg, { fitTo: { mode: 'width', value: width } }).render();
-  return { data: new Uint8ClampedArray(r.pixels), width: r.width, height: r.height };
+  return { data: unpremultiply(r.pixels), width: r.width, height: r.height };
 }

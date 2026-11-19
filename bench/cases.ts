@@ -1,9 +1,11 @@
 import { Resvg } from '@resvg/resvg-js';
 import type { RawImage } from '../src/engine/types';
+import { unpremultiply } from './pixels';
 
 export interface BenchCase {
   id: string;
   preset: 'logo' | 'illustration' | 'photo' | 'cnc';
+  options?: Partial<import('../src/engine/types').Options>; // ajustes específicos do caso
   svg: string; // fonte vetorial usada para gerar o raster "original" (com anti-aliasing)
 }
 
@@ -73,6 +75,20 @@ export const CASES: BenchCase[] = [
       <circle cx="420" cy="440" r="22" fill="#6d5efc"/>`),
   },
   {
+    id: 'details', preset: 'logo', options: { maxColors: 12 },
+    svg: wrap(`<g fill="none" stroke="#111" stroke-linecap="butt">
+        <path d="M20 30L240 70" stroke-width="1.2"/><path d="M20 60L240 60" stroke-width="2"/><path d="M30 90V230" stroke-width="3"/><path d="M60 90V230" stroke-width="1.5"/>
+        <path d="M90 100C130 80 170 140 230 110" stroke-width="2"/><path d="M90 130C130 110 170 170 230 140" stroke-width="1.2"/></g>
+      <g fill="#111"><circle cx="270" cy="40" r="2.5"/><circle cx="290" cy="40" r="3.5"/><circle cx="315" cy="40" r="5"/>
+        <rect x="340" y="34" width="6" height="6"/><rect x="360" y="34" width="12" height="12"/><rect x="390" y="30" width="10" height="10" transform="rotate(35 395 35)"/></g>
+      <g fill="#c0392b"><polygon points="270,120 330,128 270,136"/><polygon points="270,160 380,164 270,168"/><polygon points="400,100 408,190 416,100"/></g>
+      <g fill="#111" stroke="none"><g transform="translate(270 200) scale(.6)">${textLine('Resonates', 0, 0, 24)}</g><g transform="translate(270 230) scale(.5)">${textLine('Origin tens', 0, 0, 24)}</g></g>
+      <g transform="translate(20 300)"><rect width="10" height="10" fill="#e74c3c"/><rect x="10" width="10" height="10" fill="#2980b9"/><rect x="20" width="10" height="10" fill="#27ae60"/><rect x="30" width="10" height="10" fill="#f1c40f"/>
+        <rect y="10" width="10" height="10" fill="#2980b9"/><rect x="10" y="10" width="10" height="10" fill="#e74c3c"/><rect x="20" y="10" width="10" height="10" fill="#f1c40f"/><rect x="30" y="10" width="10" height="10" fill="#27ae60"/></g>
+      <g fill="#111" transform="translate(120 300)"><polygon points="0,40 20,0 40,40"/><polygon points="60,40 80,4 100,40 90,40 80,20 70,40"/><path d="M130 40Q150 -10 170 40Z"/><circle cx="200" cy="20" r="14"/><circle cx="200" cy="20" r="7" fill="#fff"/></g>
+      <g stroke="#111" stroke-width="1" fill="none"><path d="M20 380H240M20 400H240M20 420H240M20 440H240"/><path d="M20 380V440M60 380V440M100 380V440M140 380V440M180 380V440M220 380V440"/></g>`),
+  },
+  {
     id: 'stripes', preset: 'logo',
     svg: wrap(`<rect width="170" height="512" fill="#1f9d55"/><rect x="170" width="172" height="512" fill="#fff"/><rect x="342" width="170" height="512" fill="#d62839"/>
       <polygon points="0,512 512,0 512,60 60,512" fill="#ffd100" opacity="1"/>`),
@@ -81,5 +97,5 @@ export const CASES: BenchCase[] = [
 
 export function rasterize(svg: string, width = S): RawImage {
   const r = new Resvg(svg, { fitTo: { mode: 'width', value: width }, font: { loadSystemFonts: false } }).render();
-  return { data: new Uint8ClampedArray(r.pixels), width: r.width, height: r.height };
+  return { data: unpremultiply(r.pixels), width: r.width, height: r.height };
 }

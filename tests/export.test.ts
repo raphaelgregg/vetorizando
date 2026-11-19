@@ -242,3 +242,28 @@ describe('DXF', () => {
     expect(dxf({ groupBy: 'layer' })).toContain('CAMADA_1');
   });
 });
+
+describe('borda aberta (transparência): fendas recortadas pela união', () => {
+  const ic = CASES.find((c) => c.id === 'icon')!;
+  const o = PRESETS[0].options;
+  const doc = vectorize(rasterize(ic.svg), o);
+  it('PDF usa recorte (W n) antes dos traços de fenda; EPS usa clip', () => {
+    expect(doc.openBoundary).toBe(true);
+    const pdf = str(exportDoc('pdf', doc, o, { unit: 'px', dpi: 72 }, 512, 512).data);
+    expect(pdf).toContain('W n\n');
+    expect(pdf.indexOf('W n\n')).toBeLessThan(pdf.indexOf('\nS\n'));
+    const eps = str(exportDoc('eps', doc, o, { unit: 'px', dpi: 72 }, 512, 512).data);
+    expect(eps).toContain('clip\n');
+    expect(psBBox(eps).left).toBe(0); // interpretador entende o recorte e a pilha fecha
+  });
+  const hasPdftoppm = spawnSync('pdftoppm', ['-v']).status !== null;
+  it.skipIf(!hasPdftoppm)('PDF do ícone renderizado ≈ SVG (SSIM ≥ 0,98) e silhueta não engrossa', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pdf2-'));
+    writeFileSync(join(dir, 'a.pdf'), exportDoc('pdf', doc, o, { unit: 'px', width: 512, dpi: 72 }, 512, 512).data as Uint8Array);
+    execFileSync('pdftoppm', ['-png', '-r', '72', '-singlefile', join(dir, 'a.pdf'), join(dir, 'a')]);
+    const p = PNG.sync.read(readFileSync(join(dir, 'a.png')));
+    const rendered = { data: new Uint8ClampedArray(p.data), width: p.width, height: p.height };
+    const ref = renderSvg(str(exportDoc('svg', doc, o, px, 512, 512).data), 512);
+    expect(compare(ref, rendered).ssim).toBeGreaterThan(0.98);
+  });
+});

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "bench": "tsx bench/run.ts"
+    "bench": "tsx bench/run.ts",
+    "bench:calibrate": "tsx bench/run.ts --calibrate --write"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

@@ -19,13 +19,21 @@ npm run build      # typecheck + build estático em dist/
 - **UI** (`src/ui`, `src/main.ts`): upload por arrastar/clicar/`Ctrl+V` com validação, 4 exemplos em 1 clique, estúdio com **Antes/Depois deslizante**, zoom/pan (roda, arrastar, pinça, duplo clique), **Raio‑X** (nós e alças), presets, ajustes avançados recolhíveis com reprocessamento ao vivo, tema claro/escuro, download SVG.
 - **Testes**: 9 testes do motor (círculo, quadrado, anel com furo, fundo, transparência, empilhado, casos degenerados, SVG válido, determinismo) + verificação ponta a ponta no Chromium (fluxo completo, download, erro de formato, sem erros no console). CI em `.github/workflows/ci.yml`.
 
+## Princípio: fidelidade primeiro
+
+O objetivo é o **SVG mais fiel possível** à imagem enviada; a contagem de nós é secundária e só cai quando não há perda visual.
+Prioridades do motor, em ordem: (1) posição/espessura exatas dos contornos, (2) cor exata, (3) preservar traços finos, cantos e detalhes pequenos, (4) menos nós.
+
 ## Motor: como reduzimos nós sem perder precisão
 
 1. **Clusters de mistura**: o k‑means cria cores intermediárias de anti-aliasing; elas são detectadas (pequenas e explicáveis como mistura de duas outras) e removidas, e cada pixel de borda recebe a **cobertura** de cada cor (sRGB) → contorno subpixel (marching squares sobre o campo de cobertura).
 2. **Cantos**: ângulo em duas escalas (k e 2k) sobre pontos levemente suavizados (num canto o ângulo persiste; numa curva ele dobra) e **refino do vértice** pela interseção das retas ajustadas (TLS) → vértices a < 0,7 px do verdadeiro e fronteiras compartilhadas sem fenda entre regiões.
 3. **Primitivas**: a cada passo estende-se o trecho o máximo possível com reta, **arco circular**, **arco elíptico** (Halir–Flusser + extremos exatos, validado por distância geométrica) ou Bézier cúbica; micro-segmentos (< 0,75 px) são absorvidos.
-4. **Suavização adaptativa**: a janela da média móvel é limitada pelo tamanho do contorno (formas pequenas/texto não são encolhidas).
-5. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
+4. **Suavização adaptativa**: a janela da média móvel é limitada pelo tamanho do contorno (formas pequenas/texto não são encolhidas). **Traços finos** (raio hidráulico área/perímetro < 2,2 px, i.e. largura ≲ 4 px) não são suavizados, usam tolerância ≤ 0,25 px e janela de canto menor — sem isso linhas de 2 px colapsavam em caminhos de área zero.
+5. **Remoção de manchas sensível a contraste**: componentes com conectividade 8 (uma linha diagonal de 1 px é um só); componente pequeno mas contrastante (linha fina, ponto) é detalhe e fica; só franjas de anti-aliasing (cor entre duas vizinhas grandes) e ruído de baixo contraste saem.
+6. **Fusão pós-ajuste conservadora**: 2–3 primitivas vizinhas viram uma só apenas se uma única primitiva cobrir o trecho com desvio ≤ 80% da tolerância contra o contorno original e a junta interna for suave (< 25°); nunca atravessa cantos.
+7. **Preenchimento de fendas correto**: os traços ficam numa camada **abaixo** de todos os preenchimentos (antes ficavam sobre cada forma e engrossavam traços ~0,3 px por lado) e, com transparência/fundo removido, são recortados pela união das regiões (`clipPath` no SVG, `W n` no PDF, `clip` no EPS) para não crescer a silhueta.
+8. Exportação: elipses viram Béziers em PDF/EPS e polilinhas em DXF R12 (sem elipse nativa); SVG usa `A rx ry rot`.
 
 ## Exportação (SVG · PDF · EPS · DXF), unidades e DPI
 
@@ -34,7 +42,7 @@ Todos os formatos derivam do mesmo modelo vetorial (`src/export`), respeitando *
 | Formato | Como é gerado | Agrupamento (cor / camada) |
 |---|---|---|
 | **SVG** | `path` com `M L C A`; `viewBox` + `width/height` na unidade escolhida | `<g>` por cor; por camada usa `inkscape:groupmode="layer"` |
-| **PDF** | PDF 1.4/1.5 escrito à mão, Béziers (arcos convertidos), `f` / `B` (fendas) / `S` (contorno) | camadas opcionais (**OCG**, PDF 1.5) |
+| **PDF** | PDF 1.4/1.5 escrito à mão, Béziers (arcos convertidos), `f` (preenchimento) / `S` (contorno e traços de fenda abaixo dos preenchimentos) | camadas opcionais (**OCG**, PDF 1.5) |
 | **EPS** | PostScript nível 3, EPSF‑3.0 com `BoundingBox` | comentários `%%Group:` (PostScript não tem camadas) |
 | **DXF** | R12: `POLYLINE` fechada, **arcos nativos (bulge)**, retas exatas, Béziers achatadas (tolerância 0,02 mm); só contornos | uma **layer** por grupo, com cor ACI |
 
@@ -51,7 +59,8 @@ Compara o **raster original** com o **SVG renderizado** (renderizador `resvg`, i
 | **SSIM** | similaridade estrutural na luminância (janela 7×7; 1 = idêntico) |
 | **ΔE / ΔE95** | diferença de cor CIE76 média e percentil 95 |
 | **HD95 / HDmax** | distância de Hausdorff (percentil 95 / máxima, em px) entre mapas de bordas fortes (ΔE ≥ 25) |
-| **nós, KB, ms** | complexidade, tamanho do SVG e tempo |
+| **ΔEborda / ΔEplano** | ΔE médio só nos pixels de borda (≤ 2 px de um contraste) = erro **geométrico**; e só nas áreas planas = erro de **cor** (paleta/quantização) |
+| **nós, KB, ms** | complexidade, tamanho do SVG e tempo (secundários: fidelidade vem primeiro) |
 
 ```bash
 npm run bench                          # casos embutidos + pares em bench/pairs
@@ -61,15 +70,16 @@ npm run bench -- --out out --json r.json --preset illustration
 
 - **Casos embutidos** (`bench/cases.ts`): logo, ícone, ilustração, foto/degradê, lineart, listras — gerados de fontes vetoriais com anti-aliasing, então reproduzíveis sem arquivos binários.
 - **Pares de referência** (`bench/pairs/`): coloque `nome.png|jpg` + opcional `nome.ref.svg` (SVG de outra ferramenta) e `nome.json` (preset/opções). O SVG de referência aparece numa linha `↳ ref` para comparação direta de SSIM/ΔE/HD/nós. Ver `bench/pairs/README.md`.
-- **Regressão**: `bench/thresholds.json` define limites por caso; `npm test` falha se algum caso piorar; a taxa de sucesso é impressa no final.
+- **Regressão**: `bench/thresholds.json` define limites por caso (SSIM, ΔE, ΔEborda, ΔEplano, HD95, nós); `npm test` falha se algum caso piorar; a taxa de sucesso é impressa no final. `npm run bench:calibrate` recalibra a partir dos resultados atuais (use só em melhorias intencionais; **nunca afrouxe um limite para fazer passar**).
+- **Calibrar com imagens reais**: ver o passo a passo em `bench/pairs/README.md` (`npm run bench -- --no-builtin --calibrate --write`).
 - Hausdorff só é significativo com bordas duras: em degradês a quantização cria “bandas” que o original não tem (por isso HD95 não é exigido em ilustração/foto).
 
-Resultados atuais (SSIM / ΔE / HD95 px / nós): logo 0,989 / 0,31 / 1,0 / 68 · ícone 0,992 / 0,42 / 1,0 / 44 · lineart 0,983 / 0,55 / 1,0 / 68 · **texto** 0,990 / 0,46 / 1,0 / 646 · **elipses** 0,992 / 0,53 / 1,0 / 47 · listras 0,993 / 0,23 / 1,0 / 33 · ilustração 0,969 / 1,81 / – / 222 · foto 0,871 / 5,28 / – / 3234.
+Resultados atuais (SSIM / ΔE / ΔEborda / nós): logo 0,9987 / 0,07 / 0,98 / 69 · ícone 0,9964 / 0,18 / 2,58 / 51 · lineart 0,9939 / 0,25 / 2,23 / 74 · texto 0,9958 / 0,21 / 2,03 / 717 · elipses 0,9976 / 0,38 / 2,45 / 60 · listras 0,9969 / 0,14 / 2,02 / 32 · detalhes finos 0,9928 / 0,23 / 2,04 / 1253 · ilustração 0,9788 / 0,84 / 4,95 / 568 · foto 0,8714 / 5,28 / 10,13 / 3397.
 
 ## Lacunas conhecidas (próximas iterações)
 
 1. **Texto** ainda usa ~9–10 nós por glifo (aprox. no piso para tolerância 0,5 px); retângulos arredondados saem como Béziers em vez de `L`+`A` (menos nós, mas menos “semânticos”); fusão pós-ajuste entre primitivas vizinhas ainda não existe.
-2. **Degradês** viram bandas (limite da quantização por cores); foto SSIM ≈ 0,87.
+2. **Degradês/foto** viram bandas (limite da quantização por cores; mais cores melhoram ΔE mas pioram SSIM por fragmentação): foto SSIM ≈ 0,87. **Hairlines < 1,5 px** (diagonais) saem tracejadas: a tinta fica espalhada em vários tons de cinza.
 3. **Gap filler** hoje é traço por caminho (`paint-order`); falta validação automática de ausência de fendas.
 4. **DXF** só em R12 (Béziers viram polilinhas; sem splines/hachuras); **EPS** sem camadas reais (grupos em comentários) e **sem validação em Ghostscript** (verificado por interpretador próprio de teste); PDF sem compressão.
 5. **Pares de referência reais** (imagem → SVG de outra ferramenta) ainda não foram adicionados a `bench/pairs/`.

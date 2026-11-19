@@ -97,12 +97,12 @@ function turnAngle(q: Pt[], i: number, k: number): number {
  * verdadeiro o ângulo persiste nas duas escalas; numa curva fechada ele dobra com a escala.
  * Evita falsos cantos em curvas pequenas e no ruído.
  */
-function detectCorners(p: Pt[], thresholdDeg: number, k: number): { corners: number[]; ang: Float64Array } {
+function detectCorners(p: Pt[], thresholdDeg: number, k: number, light = true): { corners: number[]; ang: Float64Array } {
   const n = p.length;
   const ang = new Float64Array(n);
   const kk = Math.min(k, Math.floor(n / 6));
   if (kk < 2) return { corners: [], ang };
-  const q = p.map((_, i) => {
+  const q = !light ? p : p.map((_, i) => {
     const a = p[(i - 1 + n) % n], b = p[(i + 1) % n];
     return { x: (a.x + p[i].x + b.x) / 3, y: (a.y + p[i].y + b.y) / 3 };
   });
@@ -301,24 +301,72 @@ function extent(ok: (e: number) => boolean, minE: number, maxE: number): number 
   return lo;
 }
 
+interface PrimInfo { seg: Seg; s: number; e: number; tOut: Pt }
+
+const MERGE_TOL = 0.8; // fusão só se o desvio máximo ≤ 80% da tolerância de ajuste
+const MERGE_MAX_TURN = 25; // graus: não funde através de uma junta com mudança brusca de direção
+
+function turnAt(P: Pt[], k: number): number {
+  const a = Math.max(0, k - 3), b = Math.min(P.length - 1, k + 3);
+  const u = sub(P[k], P[a]), v = sub(P[b], P[k]);
+  const lu = len(u), lv = len(v);
+  return lu && lv ? (Math.acos(Math.max(-1, Math.min(1, dot(u, v) / (lu * lv)))) * 180) / Math.PI : 0;
+}
+
+/** Tenta cobrir P[s..e] com UMA primitiva (reta → arco → elipse → cúbica) dentro de `tol`. */
+function onePrimitive(P: Pt[], s: number, e: number, tIn: Pt, tEndIn: Pt, tol: number, arcs: boolean, ellipses: boolean): PrimInfo | null {
+  if (lineOk(P, s, e, tol)) return { seg: { t: 'L', p: P[e] }, s, e, tOut: norm(sub(P[e], P[s])) };
+  if (arcs) { const f = arcFit(P, s, e, tol); if (f) return { seg: f.seg, s, e, tOut: f.tOut }; }
+  if (ellipses && e - s >= 16) { const f = ellipseArcFit(P, s, e, tol); if (f) return { seg: f.seg, s, e, tOut: f.tOut }; }
+  const b = cubicFit(P, s, e, tIn, mul(tEndIn, -1), tol);
+  if (b) { const t = norm(sub(b[3], b[2])); return { seg: { t: 'C', c1: b[1], c2: b[2], p: b[3] }, s, e, tOut: t }; }
+  return null;
+}
+
+/**
+ * Fusão pós-ajuste CONSERVADORA: funde 2–3 primitivas vizinhas numa só quando uma única
+ * primitiva cobre todo o trecho com desvio ≤ 80% da tolerância (contra o contorno original) e a
+ * junta interna é suave (< 25°). Nunca atravessa cantos nem detalhes de curvatura brusca.
+ */
+function mergePrimitives(P: Pt[], infos: PrimInfo[], tStart: Pt, tAt: (k: number) => Pt, tol: number, arcs: boolean, ellipses: boolean): PrimInfo[] {
+  let changed = true;
+  for (let guard = 0; changed && guard < 50; guard++) {
+    changed = false;
+    for (let i = 0; i + 1 < infos.length && !changed; i++) {
+      for (const span of [3, 2]) {
+        if (i + span > infos.length) continue;
+        let sharp = false;
+        for (let j = i; j < i + span - 1; j++) if (turnAt(P, infos[j].e) > MERGE_MAX_TURN) sharp = true;
+        if (sharp) continue;
+        const s = infos[i].s, e = infos[i + span - 1].e;
+        const m = onePrimitive(P, s, e, i === 0 ? tStart : infos[i - 1].tOut, tAt(e), tol, arcs, ellipses);
+        if (m) { infos.splice(i, span, m); changed = true; break; }
+      }
+    }
+  }
+  return infos;
+}
+
 /**
  * Cobre a sequência de pontos com o MENOR número de primitivas: a cada passo estende
  * o trecho o máximo possível com reta, arco ou Bézier cúbica (continuidade G1 entre elas).
  */
-function fitRun(P: Pt[], tStart: Pt, tEnd: Pt, tol: number, arcs: boolean, ellipses: boolean, cornerRun = false): Seg[] {
+function fitRun(P: Pt[], tStart: Pt, tEnd: Pt, tol: number, arcs: boolean, ellipses: boolean, cornerRun = false, merge = true): Seg[] {
   const m = P.length;
-  const out: Seg[] = [];
   // trecho entre dois cantos que é uma única reta: a ponta (arredondada pela cobertura do pixel) não conta;
   // o vértice exato é recuperado depois pela interseção das retas vizinhas
   if (cornerRun && m > 8) {
     const l = tlsLine(P);
     if (l) {
       let ok = true;
-      for (let i = 2; i < m - 2 && ok; i++) if (Math.abs((P[i].x - l.c.x) * l.d.y - (P[i].y - l.c.y) * l.d.x) > tol) ok = false;
+      const off = (q: Pt) => Math.abs((q.x - l.c.x) * l.d.y - (q.y - l.c.y) * l.d.x);
+      for (let i = 2; i < m - 2 && ok; i++) if (off(P[i]) > tol) ok = false;
+      if (off(P[0]) > Math.max(1, tol * 2) || off(P[m - 1]) > Math.max(1, tol * 2)) ok = false; // pontas fora da reta: não é aresta de polígono
       if (ok) return [{ t: 'L', p: P[m - 1] }];
     }
   }
   const tAt = (k: number) => (k >= m - 1 ? tEnd : norm(sub(P[Math.min(k + 2, m - 1)], P[Math.max(k - 2, 0)])));
+  const infos: PrimInfo[] = [];
   let s = 0, tIn = tStart;
   while (s < m - 1) {
     const last = m - 1;
@@ -344,18 +392,18 @@ function fitRun(P: Pt[], tStart: Pt, tEnd: Pt, tol: number, arcs: boolean, ellip
     }
     if (kind === 'A' || kind === 'E') {
       const f = (kind === 'A' ? arcFit(P, s, e, tol) : ellipseArcFit(P, s, e, tol))!;
-      out.push(f.seg); tIn = f.tOut;
+      infos.push({ seg: f.seg, s, e, tOut: f.tOut }); tIn = f.tOut;
     } else if (kind === 'C') {
       const b = cubicFit(P, s, e, tIn, mul(tAt(e), -1), tol)!;
-      out.push({ t: 'C', c1: b[1], c2: b[2], p: b[3] });
       tIn = norm(sub(b[3], b[2]));
+      infos.push({ seg: { t: 'C', c1: b[1], c2: b[2], p: b[3] }, s, e, tOut: tIn });
     } else {
-      out.push({ t: 'L', p: P[e] });
       tIn = norm(sub(P[e], P[s]));
+      infos.push({ seg: { t: 'L', p: P[e] }, s, e, tOut: tIn });
     }
     s = e;
   }
-  return out;
+  return (merge ? mergePrimitives(P, infos, tStart, tAt, tol * MERGE_TOL, arcs, ellipses) : infos).map((i) => i.seg);
 }
 
 /** Reta por mínimos quadrados totais (ignora os 2 pontos de cada ponta, afetados pelo arredondamento do canto). */
@@ -403,8 +451,11 @@ function dropMicroSegments(path: VPath, minLen: number): VPath {
 }
 
 const MICRO = 0.75; // px
+const THIN_HYDRAULIC = 2.2; // px: abaixo disso o contorno é de um traço fino (largura ≲ 4 px)
+const THIN_TOL = 0.25; // px
 
 export interface FitOptions {
+  merge?: boolean; // fusão conservadora pós-ajuste (padrão: ligada)
   tolerance: number;
   cornerThreshold: number;
   smooth: number;
@@ -413,12 +464,20 @@ export interface FitOptions {
 }
 
 /** Converte um contorno denso em caminho com retas, arcos e Béziers cúbicas. */
-export function fitLoop(loop: Pt[], o: FitOptions): VPath {
+export function fitLoop(loop: Pt[], opts: FitOptions): VPath {
+  let o = opts;
   const p = loop.filter((q, i) => i === 0 || q.x !== loop[i - 1].x || q.y !== loop[i - 1].y);
   if (p.length > 1 && p[0].x === p[p.length - 1].x && p[0].y === p[p.length - 1].y) p.pop();
   const n = p.length;
   if (n < 4) return { start: p[0], segs: p.slice(1).map((q) => ({ t: 'L' as const, p: q })) };
-  const { corners, ang } = detectCorners(p, o.cornerThreshold, 4);
+  // contorno fino (raio hidráulico = área/perímetro ≈ meia largura): preserva largura e posição
+  let area2 = 0, per = 0;
+  for (let i = 0; i < n; i++) { const q = p[(i + 1) % n]; area2 += p[i].x * q.y - q.x * p[i].y; per += Math.hypot(q.x - p[i].x, q.y - p[i].y); }
+  const hyd = per > 0 ? Math.abs(area2 / 2) / per : 0;
+  const thin = hyd < THIN_HYDRAULIC;
+  const micro = thin ? 0.3 : MICRO; // em traço fino, 1 px é detalhe real
+  if (thin) o = { ...o, smooth: 0, tolerance: Math.min(o.tolerance, THIN_TOL) };
+  const { corners, ang } = detectCorners(p, o.cornerThreshold, thin ? 2 : 4, !thin);
   // janela proporcional ao contorno: formas pequenas (texto, pontos) não podem ser encolhidas pela média móvel
   const s = smoothPoints(p, corners, Math.min(Math.round(o.smooth), Math.max(1, Math.floor(n / 40))));
   if (corners.length === 0) {
@@ -426,7 +485,7 @@ export function fitLoop(loop: Pt[], o: FitOptions): VPath {
     for (let i = 1; i < n; i++) if (ang[i] > ang[a0]) a0 = i;
     const r = [...s.slice(a0), ...s.slice(0, a0)];
     const t = norm(sub(r[2 % n], r[n - 2]));
-    return dropMicroSegments({ start: r[0], segs: fitRun([...r, r[0]], t, t, o.tolerance, o.arcs, o.ellipses) }, MICRO);
+    return dropMicroSegments({ start: r[0], segs: fitRun([...r, r[0]], t, t, o.tolerance, o.arcs, o.ellipses, false, o.merge !== false) }, micro);
   }
   // ajusta cada trecho entre cantos e guarda a reta (TLS) dos trechos que viraram uma única reta
   interface Run { segs: Seg[]; line: { c: Pt; d: Pt } | null }
@@ -442,7 +501,7 @@ export function fitLoop(loop: Pt[], o: FitOptions): VPath {
     const m = part.length;
     const t1 = norm(sub(part[Math.min(3, m - 1)], part[0]));
     const t2 = norm(sub(part[m - 1], part[Math.max(m - 4, 0)]));
-    const rs = fitRun(part, t1, t2, o.tolerance, o.arcs, o.ellipses, true);
+    const rs = fitRun(part, t1, t2, o.tolerance, o.arcs, o.ellipses, true, o.merge !== false);
     runs.push({ segs: rs, line: rs.length === 1 && rs[0].t === 'L' ? tlsLine(part) : null });
   }
   // refino de cantos: vértice entre duas retas = interseção das retas ajustadas
@@ -458,5 +517,5 @@ export function fitLoop(loop: Pt[], o: FitOptions): VPath {
     if (c === 0) start = v;
   }
   const segs: Seg[] = runs.flatMap((r) => r.segs);
-  return dropMicroSegments({ start, segs }, MICRO);
+  return dropMicroSegments({ start, segs }, micro);
 }
