@@ -26,8 +26,8 @@ function morph(src: Uint8Array, w: number, h: number, r: number, dilate: boolean
 
 /**
  * União geométrica de formas: cada forma (contorno + furos) é rasterizada numa grade fina (até 3×), as máscaras são
- * unidas (OR) e fechadas por 1 passo morfológico — assim formas vizinhas, sobrepostas ou separadas por uma fresta de
- * subpixel viram UM contorno, sem costuras —, e o resultado é traçado e reajustado com retas/arcos/Béziers.
+ * unidas (OR) e fechadas e pontes locais (onde duas formas ficam a menos de ~1 px uma da outra) — assim formas vizinhas, sobrepostas ou
+ * separadas por uma fresta de subpixel viram UM contorno, sem costuras e sem alterar o resto do contorno —, e o resultado é traçado e reajustado com retas/arcos/Béziers.
  * Furos que continuam existindo na união são preservados; furos preenchidos por outra forma desaparecem.
  */
 export function unionShapes(shapes: VPath[][]): VPath[] {
@@ -41,16 +41,24 @@ export function unionShapes(shapes: VPath[][]): VPath[] {
   const W = Math.ceil(bw * S), H = Math.ceil(bh * S);
   const ox = x0 - pad, oy = y0 - pad;
   const mask = new Uint8Array(W * H);
+  const r = Math.max(1, Math.round(S * 0.9)); // ponte para frestas de até ~1,8 px
+  const near = new Uint8Array(W * H); // quantas formas estão a ≤ r (≈ 0,6 px) de cada célula
   for (const sh of shapes) {
     const scaled: VPath[] = sh.map((p) => {
       const c = toCubicPath(p), m = (q: Pt): Pt => ({ x: (q.x - ox) * S, y: (q.y - oy) * S });
       return { start: m(c.start), segs: c.segs.map((s) => (s.t === 'L' ? { t: 'L' as const, p: m(s.p) } : { t: 'C' as const, c1: m(s.c1), c2: m(s.c2), p: m(s.p) })) };
     });
+    const own = new Uint8Array(W * H);
     const spans = rasterSpans(scaled, W, H);
-    for (let k = 0; k < spans.length; k += 3) mask.fill(1, spans[k] * W + spans[k + 1], spans[k] * W + spans[k + 2] + 1);
+    for (let k = 0; k < spans.length; k += 3) own.fill(1, spans[k] * W + spans[k + 1], spans[k] * W + spans[k + 2] + 1);
+    for (let i = 0; i < own.length; i++) if (own[i]) mask[i] = 1;
+    const grown = morph(own, W, H, r, true);
+    for (let i = 0; i < grown.length; i++) near[i] += grown[i];
   }
-  const r = Math.max(1, Math.round(S * 0.6));
-  const closed = morph(morph(mask, W, H, r, true), W, H, r, false);
+  // ponte só onde DUAS formas se aproximam (a costura/fresta entre elas): o resto do contorno não é alterado,
+  // ao contrário de um fechamento global, que também preencheria reentrâncias de uma única forma
+  if (shapes.length > 1) for (let i = 0; i < mask.length; i++) if (near[i] >= 2) mask[i] = 1;
+  const closed = mask;
   const out: VPath[] = [];
   for (const loop of traceField(closed, W, H, 0.8)) {
     const l = loop.map((q): Pt => ({ x: q.x / S + ox, y: q.y / S + oy }));

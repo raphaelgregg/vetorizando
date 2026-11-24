@@ -190,9 +190,11 @@ export function initShapes(host: ShapesHost) {
     if (!b || !doc || sel().size < 2) return;
     const shapes = listShapes(doc).filter((s) => sel().has(s.id));
     const main = shapes.reduce((a, c) => (c.area > a.area ? c : a));
+    const before = shapes.reduce((n, x) => n + x.nodes, 0);
     host.commit(mergeShapes(b, doc, host.edits(), ids()));
     host.setSelection(new Set([main.id]));
-    host.hint(`${shapes.length} formas unidas num único contorno (a maior define a cor).`);
+    const after = host.doc() ? listShapes(host.doc()!).find((x) => x.id === main.id)?.nodes : undefined;
+    host.hint(`${shapes.length} formas unidas em um único objeto${after !== undefined ? ` (${before} → ${after} pontos: os pontos que dividiam as formas foram removidos)` : ''}. A maior define a cor.`);
   });
   $('shcopy').addEventListener('click', () => setCopying(!copying));
   $('shsim').addEventListener('click', () => {
