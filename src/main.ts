@@ -1,4 +1,5 @@
 import './style.css';
+import { autoOptions } from './engine/analyze';
 import { PRESETS } from './engine/presets';
 import { PaletteEdits, applyPaletteEdits, backgroundOriginal, canHideWithoutReprocess, suggestCurrentColor } from './engine/palette';
 import { ShapeEdits, applyShapeEdits, hasShapeEdits, remapShapeEdits, shapeMapDoc } from './engine/shapes';
@@ -37,7 +38,9 @@ const state = {
   doc: null as VDoc | null,
   svg: '',
   options: { ...PRESETS[0].options } as Options,
-  preset: 'logo' as string,
+  preset: 'auto' as string,
+  /** explicação da escolha automática (preset e nº de cores) */
+  autoNote: '',
   format: 'svg' as Format,
   size: { unit: 'px', dpi: 96 } as SizeSpec,
 };
@@ -88,6 +91,7 @@ async function handleFile(file: File | null | undefined) {
     state.doc = null;
     state.baseDoc = null;
     state.edits = {};
+    applyAuto(); renderPresets(); renderAdvanced();
     state.shapeEdits = {}; state.history = []; state.future = []; state.selection = new Set(); state.midDoc = null;
     icons.setName(loaded.name);
     state.size = { unit: 'px', dpi: Number($<HTMLInputElement>('dpi').value) || 96 };
@@ -208,8 +212,22 @@ $('zout').addEventListener('click', () => viewer.zoomBy(1 / 1.4));
 $('zfit').addEventListener('click', () => viewer.fit());
 
 // ---------- presets e avançado ----------
+/** Analisa a imagem carregada e aplica preset/cores sugeridos (modo Automático). */
+function applyAuto() {
+  const l = state.loaded;
+  if (!l) return;
+  const a = autoOptions(l.image);
+  state.options = { ...a.options };
+  state.preset = 'auto';
+  state.autoNote = `${PRESETS.find((p) => p.id === a.suggestion.preset)!.label} · ${a.options.maxColors} cores — ${a.suggestion.reason}`;
+}
+
 function renderPresets() {
-  $('presets').replaceChildren(...PRESETS.map((p) => {
+  const auto = document.createElement('button');
+  auto.className = 'preset' + (state.preset === 'auto' ? ' on' : '');
+  auto.innerHTML = `<b>Automático</b><small>${state.preset === 'auto' && state.autoNote ? state.autoNote : 'Analisa a imagem e escolhe preset e nº de cores'}</small>`;
+  auto.addEventListener('click', () => { applyAuto(); renderPresets(); renderAdvanced(); schedule(); });
+  $('presets').replaceChildren(auto, ...PRESETS.map((p) => {
     const b = document.createElement('button');
     b.className = 'preset' + (state.preset === p.id ? ' on' : '');
     b.innerHTML = `<b>${p.label}</b><small>${p.hint}</small>`;
