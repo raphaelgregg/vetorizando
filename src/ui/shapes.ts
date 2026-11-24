@@ -1,5 +1,6 @@
 import { pathData } from '../engine/svg';
 import { ShapeEdits, editShapes, listShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
+import { addStop, convertKind, defaultGradient, removeStop, reverse, setStop } from '../engine/gradedit';
 import type { Gradient, VDoc } from '../engine/types';
 
 export interface ShapesHost {
@@ -11,6 +12,8 @@ export interface ShapesHost {
   selection(): Set<number>;
   setSelection(s: Set<number>): void;
   commit(edits: ShapeEdits): void;
+  /** atualização ao vivo (arrastando/ajustando): não entra no histórico */
+  preview(edits: ShapeEdits): void;
   hint(text: string): void;
 }
 
@@ -30,7 +33,9 @@ export function initShapes(host: ShapesHost) {
     return listShapes(doc).filter((s) => sel().has(s.id)).map((s) => s.paths.map(pathData).join('')).join('');
   }
 
-  function render() {
+  function render(live = false) {
+    if (live) return; // edição em andamento: não reconstruir painéis (perderia o foco dos controles)
+    renderGradient();
     const doc = host.doc(), base = host.base();
     rows.replaceChildren();
     $('shhidden').replaceChildren();
@@ -77,6 +82,59 @@ export function initShapes(host: ShapesHost) {
       all.addEventListener('click', () => host.commit(editShapes(base, host.edits(), hiddenIds, null)));
       box.append(all);
     }
+  }
+
+
+  /** editor do gradiente da forma selecionada: tipo, paradas (cor + posição), inverter; as alças ficam na prévia */
+  function renderGradient() {
+    const box = $('gradbox');
+    box.replaceChildren();
+    const doc = host.doc(), base = host.base();
+    const s = doc && sel().size === 1 ? listShapes(doc).find((x) => sel().has(x.id)) : undefined;
+    box.hidden = !s || !base;
+    if (!s || !base) return;
+    const id = s.id, g = s.gradient;
+    const set = (ng: Gradient, live: boolean) => { const e = editShapes(base, host.edits(), [id], { gradient: ng }); if (live) host.preview(e); else host.commit(e); };
+    const h = document.createElement('h3');
+    h.textContent = 'Preenchimento da forma';
+    const kind = document.createElement('select');
+    for (const [v, t] of [['solid', 'Cor sólida'], ['linear', 'Gradiente linear'], ['radial', 'Gradiente radial']]) kind.add(new Option(t, v, false, (g?.kind ?? 'solid') === v));
+    kind.addEventListener('change', () => {
+      if (kind.value === 'solid') { host.commit(editShapes(base, host.edits(), [id], { color: g ? g.stops[Math.floor(g.stops.length / 2)].color : s.color })); return; }
+      const start = g ?? defaultGradient(s.bbox, s.color);
+      set(convertKind(start, kind.value as 'linear' | 'radial', s.bbox), false);
+    });
+    box.append(h, kind);
+    if (!g) { box.append(Object.assign(document.createElement('p'), { className: 'shapehint', textContent: 'Escolha linear ou radial para criar um gradiente nesta forma.' })); return; }
+    const bar = document.createElement('div');
+    bar.className = 'gradbar';
+    bar.style.background = css('', g);
+    box.append(bar);
+    g.stops.forEach((st, i) => {
+      const row = document.createElement('div');
+      row.className = 'stoprow';
+      const c = Object.assign(document.createElement('input'), { type: 'color', value: st.color, title: 'Cor da parada' });
+      const o = Object.assign(document.createElement('input'), { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(st.offset * 100)), title: 'Posição da parada' });
+      const out = document.createElement('span');
+      out.textContent = `${Math.round(st.offset * 100)}%`;
+      c.addEventListener('input', () => set(setStop(g, i, { color: c.value }), true));
+      c.addEventListener('change', () => set(setStop(g, i, { color: c.value }), false));
+      o.addEventListener('input', () => { out.textContent = `${o.value}%`; set(setStop(g, i, { offset: Number(o.value) / 100 }), true); });
+      o.addEventListener('change', () => set(setStop(g, i, { offset: Number(o.value) / 100 }), false));
+      const rm = Object.assign(document.createElement('button'), { textContent: '×', title: 'Remover parada (mínimo 2)' });
+      rm.disabled = g.stops.length <= 2;
+      rm.addEventListener('click', () => set(removeStop(g, i), false));
+      row.append(c, o, out, rm);
+      box.append(row);
+    });
+    const tools = document.createElement('div');
+    tools.className = 'tools';
+    const add = Object.assign(document.createElement('button'), { className: 'ghost', textContent: '+ parada' });
+    add.addEventListener('click', () => set(addStop(g), false));
+    const rev = Object.assign(document.createElement('button'), { className: 'ghost', textContent: 'Inverter' });
+    rev.addEventListener('click', () => set(reverse(g), false));
+    tools.append(add, rev);
+    box.append(tools, Object.assign(document.createElement('p'), { className: 'shapehint', textContent: 'Arraste as alças brancas na prévia para mudar a direção (linear) ou o centro e o raio (radial).' }));
   }
 
   function toggle(id: number, add: boolean) {

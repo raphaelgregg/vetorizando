@@ -156,3 +156,25 @@ code{font-size:.9em;background:var(--bg);padding:0 4px;border-radius:4px}
 .shapehint{font-size:12px;color:var(--mute);margin:4px 0}
 .hiddenlist{margin-top:6px;font-size:12px;color:var(--mute)}
 .hiddenlist button{background:none;border:0;color:var(--accent);text-decoration:underline;padding:0 4px;font-size:12px}
+.handles{pointer-events:none}
+.handles svg{overflow:visible}
+.nd-hit{fill:none;stroke:transparent;stroke-width:14px;vector-effect:non-scaling-stroke;pointer-events:stroke;cursor:copy}
+.nd-line{fill:none;stroke:var(--accent);stroke-width:1.5px;vector-effect:non-scaling-stroke;pointer-events:none}
+.nd-n{r:calc(5px*var(--inv,1));fill:#fff;stroke:var(--accent);stroke-width:2px;vector-effect:non-scaling-stroke;pointer-events:all;cursor:move}
+.nd-n.curve{fill:#ffe9b8}
+.nd-n.sel{fill:var(--accent);stroke:#fff}
+.nd-h{r:calc(4px*var(--inv,1));fill:#ff8a00;stroke:#fff;stroke-width:1.5px;vector-effect:non-scaling-stroke;pointer-events:all;cursor:move}
+.nd-hl{stroke:#ff8a00;stroke-width:1px;vector-effect:non-scaling-stroke;pointer-events:none}
+.gr-line{stroke:#fff;stroke-width:3px;vector-effect:non-scaling-stroke;pointer-events:none;filter:drop-shadow(0 0 1px #000)}
+.gr-ring{fill:none;stroke:#fff;stroke-width:1.5px;stroke-dasharray:6 4;vector-effect:non-scaling-stroke;pointer-events:none}
+.gr-h{r:calc(7px*var(--inv,1));fill:var(--accent);stroke:#fff;stroke-width:2px;vector-effect:non-scaling-stroke;pointer-events:all;cursor:move}
+.nodebar{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.nodebar .ghost{padding:5px 9px;font-size:13px}
+.gradbox{margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:10px}
+.gradbox h3{margin:0 0 6px;font-size:13px;color:var(--mute)}
+.gradbar{height:18px;border-radius:6px;border:1px solid var(--line);margin:4px 0 8px}
+.stoprow{display:grid;grid-template-columns:34px 1fr 44px 24px;gap:6px;align-items:center;margin:3px 0;font-size:12px}
+.stoprow input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;background:none}
+.stoprow button{background:none;border:1px solid var(--line);border-radius:6px;padding:0}
+.gradbox .tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.gradbox select{padding:4px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}

@@ -33,6 +33,7 @@ export class Viewer {
   private edit = false;
   private selEl = el('div', 'selection');
   private marquee = el('div', 'marquee');
+  private ovEl = el('div', 'handles');
   private drag: { x0: number; y0: number; moved: boolean } | null = null;
   onPick: (x: number, y: number, shift: boolean, alt: boolean) => void = () => {};
   onRect: (r: [number, number, number, number], shift: boolean, alt: boolean) => void = () => {};
@@ -40,7 +41,7 @@ export class Viewer {
   constructor(private root: HTMLElement) {
     root.replaceChildren();
     this.stageA.append(new Image());
-    this.stageB.append(this.vecEl, this.wireEl, this.selEl);
+    this.stageB.append(this.vecEl, this.wireEl, this.selEl, this.ovEl);
     this.root.append(this.marquee);
     this.marquee.hidden = true;
     this.root.addEventListener('contextmenu', (e) => { if (this.edit) e.preventDefault(); });
@@ -89,6 +90,12 @@ export class Viewer {
     this.selEl.style.cssText = `width:${this.w}px;height:${this.h}px`;
     this.selEl.innerHTML = d ? `<svg viewBox="0 0 ${this.w} ${this.h}" xmlns="${NS}"><path d="${d}" fill-rule="nonzero"/></svg>` : '';
   }
+
+  /** contêiner (no espaço do documento) para alças de pontos e de gradiente */
+  get overlay(): HTMLElement { this.ovEl.style.cssText = `width:${this.w}px;height:${this.h}px`; return this.ovEl; }
+  get size(): [number, number] { return [this.w, this.h]; }
+
+  docPoint(cx: number, cy: number): [number, number] { return this.toDoc(cx, cy); }
 
   private toDoc(cx: number, cy: number): [number, number] {
     const r = this.root.getBoundingClientRect();
@@ -151,6 +158,7 @@ export class Viewer {
     this.vecEl.style.display = this.wire ? 'none' : '';
     this.wireEl.style.display = this.wire ? '' : 'none';
     this.selEl.style.display = this.edit ? '' : 'none';
+    this.ovEl.style.display = this.edit ? '' : 'none';
     const cmp = m === 'compare' && !this.wire;
     this.b.style.clipPath = cmp ? `inset(0 0 0 ${this.split * rw}px)` : 'none';
     // o original só aparece à esquerda do divisor: senão ele vazaria por baixo das áreas transparentes do vetor

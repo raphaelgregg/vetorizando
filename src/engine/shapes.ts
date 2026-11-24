@@ -20,6 +20,8 @@ export interface Shape {
 export interface ShapeEdit {
   hidden?: boolean; // excluída (some; em "Recortes" fica transparente, em "Empilhado" aparece o que está atrás)
   color?: string; // nova cor sólida (#rrggbb): substitui cor/gradiente
+  gradient?: Gradient; // gradiente definido/ajustado à mão (substitui cor/gradiente detectado)
+  geom?: VPath[]; // contornos editados à mão (substituem os da forma; não sobrevivem a reprocessar)
   mergeInto?: number; // funde numa só forma com a outra (id da de destino): um objeto, uma tinta
   /** âncora para reaplicar a edição depois de reprocessar: um ponto dentro da forma e sua área */
   at?: [number, number];
@@ -129,6 +131,13 @@ export function interiorPoint(paths: VPath[]): [number, number] {
   return [paths[0].start.x, paths[0].start.y];
 }
 
+/** cor média das paradas (para a cor representativa de uma camada com gradiente) */
+export function meanStops(g: Gradient): string {
+  const c = [0, 0, 0];
+  for (const s of g.stops) for (let k = 0; k < 3; k++) c[k] += parseInt(s.color.slice(1 + 2 * k, 3 + 2 * k), 16);
+  return '#' + c.map((v) => Math.round(v / g.stops.length).toString(16).padStart(2, '0')).join('');
+}
+
 export const hasShapeEdits = (e: ShapeEdits): boolean => Object.keys(e).length > 0;
 
 /** Acrescenta âncora/área a uma edição (necessário para sobreviver a um reprocessamento). */
@@ -145,10 +154,11 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
     if (!s) continue;
     if (patch === null) { delete out[id]; continue; }
     const cur = { ...out[id], ...patch };
-    if (patch.color !== undefined) delete cur.mergeInto;
-    if (patch.mergeInto !== undefined) { delete cur.color; delete cur.hidden; }
+    if (patch.color !== undefined) { delete cur.mergeInto; delete cur.gradient; }
+    if (patch.gradient !== undefined) { delete cur.mergeInto; delete cur.color; }
+    if (patch.mergeInto !== undefined) { delete cur.color; delete cur.gradient; delete cur.hidden; }
     if (!cur.hidden) delete cur.hidden;
-    if (!cur.hidden && cur.color === undefined && cur.mergeInto === undefined) { delete out[id]; continue; }
+    if (!cur.hidden && cur.color === undefined && cur.mergeInto === undefined && !cur.gradient && !cur.geom) { delete out[id]; continue; }
     out[id] = { ...cur, at: interiorPoint(s.paths), area: s.area };
   }
   return out;
@@ -173,24 +183,30 @@ export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
     return cur;
   };
   let hidden = false;
+  const emitted = new Set<number>();
   const layers: Layer[] = [];
   doc.layers.forEach((layer) => {
     const keep: VPath[] = [];
     const groups = new Map<string, Layer>();
     let changed = false;
-    for (const p of layer.paths) {
-      if (p.sid === undefined) { keep.push(p); continue; }
-      const eff = resolve(p.sid), merged = eff !== p.sid, e = edits[eff];
-      if (!merged && !e) { keep.push(p); continue; }
-      if (e?.hidden) { changed = true; hidden = true; continue; }
-      const t = byId.get(eff);
-      const paint: { color: string; gradient?: Gradient } | null = e?.color ? { color: e.color } : merged && t ? { color: t.color, gradient: t.gradient } : null;
-      if (!paint) { keep.push(p); continue; }
-      changed = true;
-      const key = paint.gradient ? `g${eff}` : paint.color;
-      let g = groups.get(key);
-      if (!g) groups.set(key, (g = paint.gradient ? { color: paint.color, paths: [], gradient: paint.gradient } : { color: paint.color, paths: [] }));
-      g.paths.push(merged ? { ...p, sid: eff } : p);
+    for (const src of layer.paths) {
+      if (src.sid === undefined) { keep.push(src); continue; }
+      const eff = resolve(src.sid), merged = eff !== src.sid, e = edits[eff];
+      // contornos editados à mão substituem TODOS os da forma (emitidos uma só vez)
+      let pathsOut: VPath[] = [src];
+      if (e?.geom) { if (emitted.has(eff)) continue; emitted.add(eff); pathsOut = e.geom.map((g) => ({ ...g, sid: eff })); }
+      for (const p of pathsOut) {
+        if (!merged && !e) { keep.push(p); continue; }
+        if (e?.hidden) { changed = true; hidden = true; continue; }
+        const t = byId.get(eff);
+        const paint: { color: string; gradient?: Gradient } | null = e?.gradient ? { color: e.color ?? meanStops(e.gradient), gradient: e.gradient } : e?.color ? { color: e.color } : merged && t ? { color: t.color, gradient: t.gradient } : null;
+        if (!paint) { if (e?.geom) changed = true; keep.push(merged ? { ...p, sid: eff } : p); continue; }
+        changed = true;
+        const key = paint.gradient ? `g${eff}` : paint.color;
+        let g = groups.get(key);
+        if (!g) groups.set(key, (g = paint.gradient ? { color: paint.color, paths: [], gradient: paint.gradient } : { color: paint.color, paths: [] }));
+        g.paths.push(merged ? { ...p, sid: eff } : p);
+      }
     }
     if (!changed) { layers.push(layer); return; }
     if (keep.length) layers.push({ ...layer, paths: keep, fallback: undefined });
@@ -226,6 +242,7 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     if (nid === undefined) { dropped++; continue; }
     const s = shapes.find((x) => x.id === nid)!;
     const next: ShapeEdit = { ...e, at: interiorPoint(s.paths), area: s.area };
+    if (next.geom) { delete next.geom; dropped++; if (!next.hidden && next.color === undefined && next.mergeInto === undefined && !next.gradient) continue; } // geometria à mão não é remapeável
     if (e.mergeInto !== undefined) { const t = map.get(e.mergeInto); if (t === undefined) { dropped++; continue; } next.mergeInto = t; }
     out[nid] = next;
   }

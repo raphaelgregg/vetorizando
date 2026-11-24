@@ -41,6 +41,7 @@
         </div>
         <button id="wire" class="tog" aria-pressed="false">Raio‑X</button>
         <button id="edit" class="tog" aria-pressed="false" title="Clique numa forma para selecioná-la; arraste para selecionar várias (Shift soma, Alt escolhe a de trás)">Editar formas</button>
+        <button id="nodes" class="tog" aria-pressed="false" disabled title="Arraste pontos e alças do contorno da forma selecionada; duplo clique na linha adiciona um ponto; Delete exclui o ponto">Editar pontos</button>
         <button id="shapemap" class="tog" aria-pressed="false" title="Mostra cada forma com uma cor sólida distinta, para ver como a imagem foi segmentada">Mapa de formas</button>
         <div class="seg"><button id="undo" aria-label="Desfazer" title="Desfazer (Ctrl+Z)" disabled>↶</button><button id="redo" aria-label="Refazer" title="Refazer (Ctrl+Y)" disabled>↷</button></div>
         <div class="seg">
@@ -66,6 +67,13 @@
             <button id="shsim" class="ghost" disabled title="Seleciona as formas de cor semelhante">Semelhantes</button>
             <button id="shnone" class="ghost" disabled>Limpar seleção</button>
           </div>
+          <div id="nodebar" class="nodebar" hidden>
+            <button id="ndel" class="ghost" title="Delete">Excluir ponto</button>
+            <button id="ntog" class="ghost" title="Alterna a aresta que sai do ponto entre reta e curva">Reta ⇄ curva</button>
+            <button id="npath" class="ghost" title="Remove o contorno do ponto selecionado (ex.: um furo indevido)">Excluir contorno</button>
+            <span class="shapehint">Arraste pontos (círculos) e alças (laranja) · duplo clique na linha adiciona um ponto · Delete exclui o ponto</span>
+          </div>
+          <div id="gradbox" class="gradbox" hidden></div>
           <div id="shaperows" class="shaperows"></div>
           <div id="shhidden" class="hiddenlist"></div>
         </div>

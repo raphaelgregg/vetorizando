@@ -2,7 +2,7 @@ import './style.css';
 import { autoOptions } from './engine/analyze';
 import { PRESETS } from './engine/presets';
 import { PaletteEdits, applyPaletteEdits, backgroundOriginal, canHideWithoutReprocess, suggestCurrentColor } from './engine/palette';
-import { ShapeEdits, applyShapeEdits, hasShapeEdits, remapShapeEdits, shapeMapDoc } from './engine/shapes';
+import { ShapeEdits, applyShapeEdits, editShapes, hasShapeEdits, listShapes, remapShapeEdits, shapeMapDoc } from './engine/shapes';
 import { SvgColors, toSVG } from './engine/svg';
 import type { Options, VDoc } from './engine/types';
 import { FORMATS, Format, exportDoc } from './export';
@@ -10,6 +10,7 @@ import { SizeSpec, Unit, fmt as fnum, resolveSize, sizeInUnit } from './export/s
 import { EngineClient } from './ui/client';
 import { initIcons } from './ui/icons';
 import { initPalette } from './ui/palette';
+import { Overlay } from './ui/handles';
 import { initShapes } from './ui/shapes';
 import { Loaded, LoadError, loadFile } from './ui/loader';
 import { SAMPLES, renderSample, sampleToFile } from './ui/samples';
@@ -27,6 +28,9 @@ const state = {
   svgColors: { mode: 'hex' } as SvgColors,
   /** edições de formas (por id de forma) e histórico para desfazer/refazer */
   shapeEdits: {} as ShapeEdits,
+  /** última versão confirmada (o histórico guarda as anteriores; edições ao vivo só mudam `shapeEdits`) */
+  shapeCommitted: {} as ShapeEdits,
+  nodeMode: false,
   history: [] as ShapeEdits[],
   future: [] as ShapeEdits[],
   selection: new Set<number>(),
@@ -92,7 +96,7 @@ async function handleFile(file: File | null | undefined) {
     state.baseDoc = null;
     state.edits = {};
     applyAuto(); renderPresets(); renderAdvanced();
-    state.shapeEdits = {}; state.history = []; state.future = []; state.selection = new Set(); state.midDoc = null;
+    state.shapeEdits = {}; state.shapeCommitted = {}; state.history = []; state.future = []; state.selection = new Set(); state.midDoc = null;
     icons.setName(loaded.name);
     state.size = { unit: 'px', dpi: Number($<HTMLInputElement>('dpi').value) || 96 };
     refreshSize();
@@ -145,6 +149,7 @@ async function process() {
       // reprocessado: as edições de formas são reaplicadas pelas âncoras (ponto dentro da forma + área)
       const r = remapShapeEdits(doc, state.shapeEdits);
       state.shapeEdits = r.edits;
+      state.shapeCommitted = r.edits;
       if (r.dropped) showMsg(`${r.dropped} edição(ões) de formas não encontraram correspondência após reprocessar e foram descartadas.`);
     }
     state.history = []; state.future = []; state.selection = new Set();
@@ -172,8 +177,9 @@ function refreshFromEdits(live = false) {
     const view = state.mapView ? toSVG(shapeMapDoc(state.doc), { ...state.options, gapFiller: false, groupBy: 'none' }, { width: l.origWidth, height: l.origHeight }) : state.svg;
     viewer.setContent(l.url, state.doc.width, state.doc.height, view, state.doc);
     viewer2.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
-    shapes.render();
+    shapes.render(live);
     viewer.setSelection(shapes.overlay());
+    if (!live) refreshOverlay();
     renderStats();
     syncCurrentColor();
     icons.invalidate();
@@ -401,21 +407,40 @@ function updateHistoryButtons() {
   $<HTMLButtonElement>('redo').disabled = !state.future.length;
 }
 function commitShapes(edits: ShapeEdits) {
-  state.history.push(state.shapeEdits);
+  state.history.push(state.shapeCommitted);
   if (state.history.length > 100) state.history.shift();
   state.future = [];
+  state.shapeCommitted = edits;
   state.shapeEdits = edits;
   refreshFromEdits();
 }
-function undo() { const p = state.history.pop(); if (p) { state.future.push(state.shapeEdits); state.shapeEdits = p; refreshFromEdits(); } }
-function redo() { const n = state.future.pop(); if (n) { state.history.push(state.shapeEdits); state.shapeEdits = n; refreshFromEdits(); } }
+/** edição ao vivo (arrastando/ajustando): atualiza a prévia sem entrar no histórico */
+function previewShapes(edits: ShapeEdits) { state.shapeEdits = edits; refreshFromEdits(true); }
+function undo() { const p = state.history.pop(); if (p) { state.future.push(state.shapeCommitted); state.shapeCommitted = p; state.shapeEdits = p; refreshFromEdits(); } }
+function redo() { const n = state.future.pop(); if (n) { state.history.push(state.shapeCommitted); state.shapeCommitted = n; state.shapeEdits = n; refreshFromEdits(); } }
+const overlay = new Overlay(viewer);
+overlay.onInfo = (t) => { $('shapehint').textContent = t; };
+/** alças sobre a prévia da forma selecionada: pontos/alças de Bézier (Editar pontos) ou alças do gradiente */
+function refreshOverlay() {
+  overlay.close();
+  const ids = [...state.selection];
+  const one = state.editMode && ids.length === 1;
+  $<HTMLButtonElement>('nodes').disabled = !one;
+  if (!one && state.nodeMode) { state.nodeMode = false; setToggle('nodes', false); $('nodebar').hidden = true; }
+  const s = one && state.doc && state.baseDoc ? listShapes(state.doc).find((x) => x.id === ids[0]) : undefined;
+  if (!s) return;
+  const base = state.baseDoc!, id = s.id;
+  if (state.nodeMode) overlay.openNodes(s.paths, id, (paths) => commitShapes(editShapes(base, state.shapeEdits, [id], { geom: paths })), (d) => viewer.setSelection(d));
+  else if (s.gradient) overlay.openGradient(s.gradient, (g) => previewShapes(editShapes(base, state.shapeEdits, [id], { gradient: g })), (g) => commitShapes(editShapes(base, state.shapeEdits, [id], { gradient: g })));
+}
 const shapes = initShapes({
   base: () => state.baseDoc,
   doc: () => state.doc,
   edits: () => state.shapeEdits,
   selection: () => state.selection,
-  setSelection(s) { state.selection = s; shapes.render(); viewer.setSelection(shapes.overlay()); },
+  setSelection(s) { state.selection = s; shapes.render(); viewer.setSelection(shapes.overlay()); refreshOverlay(); },
   commit: commitShapes,
+  preview: previewShapes,
   hint: (t) => { $('shapehint').textContent = t; },
 });
 viewer.onPick = (x, y, shift, alt) => shapes.pick(x, y, shift, alt);
@@ -429,7 +454,17 @@ $('edit').addEventListener('click', () => {
   viewer.setEditMode(state.editMode);
   if (state.editMode) document.querySelector<HTMLButtonElement>('[data-mode="vector"]')?.click();
   viewer.setSelection(shapes.overlay());
+  refreshOverlay();
 });
+$('nodes').addEventListener('click', () => {
+  state.nodeMode = !state.nodeMode;
+  setToggle('nodes', state.nodeMode);
+  $('nodebar').hidden = !state.nodeMode;
+  refreshOverlay();
+});
+$('ndel').addEventListener('click', () => overlay.deleteNode());
+$('ntog').addEventListener('click', () => overlay.toggleEdge());
+$('npath').addEventListener('click', () => overlay.deletePath());
 $('shapemap').addEventListener('click', () => {
   state.mapView = !state.mapView;
   setToggle('shapemap', state.mapView);
@@ -441,8 +476,9 @@ window.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+  else if (state.nodeMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); overlay.deleteNode(); } // em "Editar pontos" Delete nunca exclui a forma inteira
   else if (state.editMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); shapes.del(); }
-  else if (state.editMode && e.key === 'Escape') { state.selection = new Set(); shapes.render(); viewer.setSelection(''); }
+  else if (state.editMode && e.key === 'Escape') { state.selection = new Set(); shapes.render(); viewer.setSelection(''); refreshOverlay(); }
 });
 
 // ---------- cores do SVG exportado: hex · currentColor · classes CSS ----------
