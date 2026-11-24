@@ -1,6 +1,7 @@
 import './style.css';
 import { PRESETS } from './engine/presets';
 import { PaletteEdits, applyPaletteEdits, backgroundOriginal, canHideWithoutReprocess, suggestCurrentColor } from './engine/palette';
+import { ShapeEdits, applyShapeEdits, hasShapeEdits, remapShapeEdits, shapeMapDoc } from './engine/shapes';
 import { SvgColors, toSVG } from './engine/svg';
 import type { Options, VDoc } from './engine/types';
 import { FORMATS, Format, exportDoc } from './export';
@@ -8,6 +9,7 @@ import { SizeSpec, Unit, fmt as fnum, resolveSize, sizeInUnit } from './export/s
 import { EngineClient } from './ui/client';
 import { initIcons } from './ui/icons';
 import { initPalette } from './ui/palette';
+import { initShapes } from './ui/shapes';
 import { Loaded, LoadError, loadFile } from './ui/loader';
 import { SAMPLES, renderSample, sampleToFile } from './ui/samples';
 import { Mode, Viewer } from './ui/viewer';
@@ -22,6 +24,15 @@ const state = {
   /** edições de paleta, por cor ORIGINAL */
   edits: {} as PaletteEdits,
   svgColors: { mode: 'hex' } as SvgColors,
+  /** edições de formas (por id de forma) e histórico para desfazer/refazer */
+  shapeEdits: {} as ShapeEdits,
+  history: [] as ShapeEdits[],
+  future: [] as ShapeEdits[],
+  selection: new Set<number>(),
+  editMode: false,
+  mapView: false,
+  /** vetor após as edições de formas (base da paleta) */
+  midDoc: null as VDoc | null,
   /** vetor com as edições aplicadas: é ele que aparece no preview e vai para todos os exportadores */
   doc: null as VDoc | null,
   svg: '',
@@ -77,6 +88,7 @@ async function handleFile(file: File | null | undefined) {
     state.doc = null;
     state.baseDoc = null;
     state.edits = {};
+    state.shapeEdits = {}; state.history = []; state.future = []; state.selection = new Set(); state.midDoc = null;
     icons.setName(loaded.name);
     state.size = { unit: 'px', dpi: Number($<HTMLInputElement>('dpi').value) || 96 };
     refreshSize();
@@ -125,6 +137,13 @@ async function process() {
   try {
     const doc = await client.run(l.image, state.options, setProgress);
     state.baseDoc = doc;
+    if (hasShapeEdits(state.shapeEdits)) {
+      // reprocessado: as edições de formas são reaplicadas pelas âncoras (ponto dentro da forma + área)
+      const r = remapShapeEdits(doc, state.shapeEdits);
+      state.shapeEdits = r.edits;
+      if (r.dropped) showMsg(`${r.dropped} edição(ões) de formas não encontraram correspondência após reprocessar e foram descartadas.`);
+    }
+    state.history = []; state.future = []; state.selection = new Set();
     refreshFromEdits();
     setProgress(1, `Pronto em ${Math.round(doc.stats.ms)} ms`);
   } catch (e) {
@@ -139,17 +158,23 @@ let refreshRaf = 0;
 function refreshFromEdits(live = false) {
   const l = state.loaded;
   if (!state.baseDoc || !l) return;
-  state.doc = applyPaletteEdits(state.baseDoc, state.edits);
+  state.midDoc = applyShapeEdits(state.baseDoc, state.shapeEdits);
+  state.doc = applyPaletteEdits(state.midDoc, state.edits);
   const paint = () => {
     refreshRaf = 0;
     if (!state.doc || !state.loaded) return;
     state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight }, { mode: 'hex', gradients: state.svgColors.gradients });
-    viewer.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
+    // "Mapa de formas": só a prévia do estúdio mostra cada forma com uma cor sólida distinta; o SVG exportado não muda
+    const view = state.mapView ? toSVG(shapeMapDoc(state.doc), { ...state.options, gapFiller: false, groupBy: 'none' }, { width: l.origWidth, height: l.origHeight }) : state.svg;
+    viewer.setContent(l.url, state.doc.width, state.doc.height, view, state.doc);
     viewer2.setContent(l.url, state.doc.width, state.doc.height, state.svg, state.doc);
+    shapes.render();
+    viewer.setSelection(shapes.overlay());
     renderStats();
     syncCurrentColor();
     icons.invalidate();
   };
+  updateHistoryButtons();
   if (live) { if (!refreshRaf) refreshRaf = requestAnimationFrame(paint); } else { cancelAnimationFrame(refreshRaf); paint(); palette.render(); }
 }
 
@@ -329,10 +354,10 @@ refreshSize();
 
 // ---------- paleta de cores (edição sobre o vetor gerado) ----------
 const palette = initPalette({
-  base: () => state.baseDoc,
+  base: () => state.midDoc,
   edits: () => state.edits,
   set(edits, opts) {
-    const base = state.baseDoc;
+    const base = state.midDoc;
     if (!base) return;
     const newlyHidden = Object.keys(edits).filter((k) => edits[k].hidden && !state.edits[k]?.hidden);
     state.edits = edits;
@@ -350,6 +375,56 @@ const palette = initPalette({
     }
     refreshFromEdits(!!opts?.live);
   },
+});
+
+// ---------- edição de formas: selecionar · excluir · recolorir · fundir · desfazer ----------
+function updateHistoryButtons() {
+  $<HTMLButtonElement>('undo').disabled = !state.history.length;
+  $<HTMLButtonElement>('redo').disabled = !state.future.length;
+}
+function commitShapes(edits: ShapeEdits) {
+  state.history.push(state.shapeEdits);
+  if (state.history.length > 100) state.history.shift();
+  state.future = [];
+  state.shapeEdits = edits;
+  refreshFromEdits();
+}
+function undo() { const p = state.history.pop(); if (p) { state.future.push(state.shapeEdits); state.shapeEdits = p; refreshFromEdits(); } }
+function redo() { const n = state.future.pop(); if (n) { state.history.push(state.shapeEdits); state.shapeEdits = n; refreshFromEdits(); } }
+const shapes = initShapes({
+  base: () => state.baseDoc,
+  doc: () => state.doc,
+  edits: () => state.shapeEdits,
+  selection: () => state.selection,
+  setSelection(s) { state.selection = s; shapes.render(); viewer.setSelection(shapes.overlay()); },
+  commit: commitShapes,
+  hint: (t) => { $('shapehint').textContent = t; },
+});
+viewer.onPick = (x, y, shift, alt) => shapes.pick(x, y, shift, alt);
+viewer.onRect = (r, shift, alt) => shapes.rect(r, shift, alt);
+$('undo').addEventListener('click', undo);
+$('redo').addEventListener('click', redo);
+function setToggle(id: string, on: boolean) { $(id).setAttribute('aria-pressed', String(on)); }
+$('edit').addEventListener('click', () => {
+  state.editMode = !state.editMode;
+  setToggle('edit', state.editMode);
+  viewer.setEditMode(state.editMode);
+  if (state.editMode) document.querySelector<HTMLButtonElement>('[data-mode="vector"]')?.click();
+  viewer.setSelection(shapes.overlay());
+});
+$('shapemap').addEventListener('click', () => {
+  state.mapView = !state.mapView;
+  setToggle('shapemap', state.mapView);
+  if (state.mapView && !state.editMode) $('edit').click();
+  refreshFromEdits();
+});
+window.addEventListener('keydown', (e) => {
+  if (state.step !== 2 || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+  else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+  else if (state.editMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); shapes.del(); }
+  else if (state.editMode && e.key === 'Escape') { state.selection = new Set(); shapes.render(); viewer.setSelection(''); }
 });
 
 // ---------- cores do SVG exportado: hex · currentColor · classes CSS ----------
@@ -383,7 +458,7 @@ const icons = initIcons({
   svgColors: () => state.svgColors,
   name: () => state.loaded?.name ?? 'icone',
   origWidth: () => state.loaded?.origWidth ?? 512,
-  backgroundColor: () => (state.baseDoc ? backgroundOriginal(state.baseDoc) : null),
+  backgroundColor: () => (state.midDoc ? backgroundOriginal(state.midDoc) : null),
 });
 function setMode3(m: 'vector' | 'icons') {
   mode3 = m;

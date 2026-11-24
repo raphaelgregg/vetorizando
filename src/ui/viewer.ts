@@ -29,11 +29,21 @@ export class Viewer {
   private pointers = new Map<number, { x: number; y: number }>();
   private draggingKnob = false;
   private pinch = 0;
+  // edição de formas: clique seleciona, arrastar desenha um retângulo; pan com botão do meio/direito ou dois dedos
+  private edit = false;
+  private selEl = el('div', 'selection');
+  private marquee = el('div', 'marquee');
+  private drag: { x0: number; y0: number; moved: boolean } | null = null;
+  onPick: (x: number, y: number, shift: boolean, alt: boolean) => void = () => {};
+  onRect: (r: [number, number, number, number], shift: boolean, alt: boolean) => void = () => {};
 
   constructor(private root: HTMLElement) {
     root.replaceChildren();
     this.stageA.append(new Image());
-    this.stageB.append(this.vecEl, this.wireEl);
+    this.stageB.append(this.vecEl, this.wireEl, this.selEl);
+    this.root.append(this.marquee);
+    this.marquee.hidden = true;
+    this.root.addEventListener('contextmenu', (e) => { if (this.edit) e.preventDefault(); });
     this.a.append(this.stageA);
     this.b.append(this.stageB);
     this.knob.textContent = '↔';
@@ -70,6 +80,19 @@ export class Viewer {
     this.buildWire(doc);
     if (first) { this.fitted = false; this.fit(); }
     this.render();
+  }
+
+  setEditMode(on: boolean): void { this.edit = on; this.root.classList.toggle('editing', on); if (!on) { this.drag = null; this.marquee.hidden = true; } }
+
+  /** `d`: dados de caminho (SVG) das formas selecionadas, em coordenadas do documento */
+  setSelection(d: string): void {
+    this.selEl.style.cssText = `width:${this.w}px;height:${this.h}px`;
+    this.selEl.innerHTML = d ? `<svg viewBox="0 0 ${this.w} ${this.h}" xmlns="${NS}"><path d="${d}" fill-rule="nonzero"/></svg>` : '';
+  }
+
+  private toDoc(cx: number, cy: number): [number, number] {
+    const r = this.root.getBoundingClientRect();
+    return [(cx - r.left - this.tx) / this.scale, (cy - r.top - this.ty) / this.scale];
   }
 
   setMode(m: Mode): void { this.mode = m; this.render(); }
@@ -127,6 +150,7 @@ export class Viewer {
     this.b.style.display = m === 'original' && !this.wire ? 'none' : '';
     this.vecEl.style.display = this.wire ? 'none' : '';
     this.wireEl.style.display = this.wire ? '' : 'none';
+    this.selEl.style.display = this.edit ? '' : 'none';
     const cmp = m === 'compare' && !this.wire;
     this.b.style.clipPath = cmp ? `inset(0 0 0 ${this.split * rw}px)` : 'none';
     // o original só aparece à esquerda do divisor: senão ele vazaria por baixo das áreas transparentes do vetor
@@ -155,7 +179,12 @@ export class Viewer {
     this.root.setPointerCapture(e.pointerId);
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this.draggingKnob = e.target === this.knob;
-    if (this.pointers.size === 2) this.pinch = this.pinchDist();
+    this.drag = null;
+    if (this.edit && !this.draggingKnob && e.button === 0 && this.pointers.size === 1) {
+      const [x0, y0] = this.toDoc(e.clientX, e.clientY);
+      this.drag = { x0, y0, moved: false };
+    }
+    if (this.pointers.size === 2) { this.pinch = this.pinchDist(); this.drag = null; this.marquee.hidden = true; }
   }
 
   private move(e: PointerEvent): void {
@@ -163,7 +192,16 @@ export class Viewer {
     if (!prev) return;
     const cur = { x: e.clientX, y: e.clientY };
     this.pointers.set(e.pointerId, cur);
-    if (this.draggingKnob) {
+    if (this.drag) {
+      const [x, y] = this.toDoc(cur.x, cur.y);
+      const r = this.root.getBoundingClientRect();
+      if (this.drag.moved || Math.hypot((x - this.drag.x0) * this.scale, (y - this.drag.y0) * this.scale) > 4) {
+        this.drag.moved = true;
+        const ax = this.drag.x0 * this.scale + this.tx, ay = this.drag.y0 * this.scale + this.ty, bx = cur.x - r.left, by = cur.y - r.top;
+        Object.assign(this.marquee.style, { left: `${Math.min(ax, bx)}px`, top: `${Math.min(ay, by)}px`, width: `${Math.abs(ax - bx)}px`, height: `${Math.abs(ay - by)}px` });
+        this.marquee.hidden = false;
+      }
+    } else if (this.draggingKnob) {
       const r = this.root.getBoundingClientRect();
       this.setSplit((cur.x - r.left) / r.width);
     } else if (this.pointers.size === 2) {
@@ -179,6 +217,13 @@ export class Viewer {
   }
 
   private up(e: PointerEvent): void {
+    if (this.drag && e.type === 'pointerup') {
+      const [x, y] = this.toDoc(e.clientX, e.clientY);
+      if (this.drag.moved) this.onRect([this.drag.x0, this.drag.y0, x, y], e.shiftKey, e.altKey);
+      else this.onPick(x, y, e.shiftKey, e.altKey);
+    }
+    this.drag = null;
+    this.marquee.hidden = true;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size === 0) this.draggingKnob = false;
     this.pinch = 0;

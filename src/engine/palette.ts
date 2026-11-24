@@ -70,7 +70,7 @@ export function paletteEntries(base: VDoc, edits: PaletteEdits = {}): PaletteEnt
   });
 }
 
-function recount(doc: VDoc): VDoc['stats'] {
+export function recount(doc: VDoc): VDoc['stats'] {
   let nodes = 0, paths = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0;
   for (const l of doc.layers) for (const p of l.paths) {
     paths++;

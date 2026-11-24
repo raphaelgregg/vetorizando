@@ -28,7 +28,7 @@ const BINS = 48;
 
 const hexOf = (c: number[]) => hex(c[0], c[1], c[2]);
 
-interface Samples { n: number; x: Float32Array; y: Float32Array; rgb: Float32Array; lab: Lab[]; band: Lab[] }
+export interface Samples { n: number; x: Float32Array; y: Float32Array; rgb: Float32Array; lab: Lab[]; band: Lab[] }
 
 interface Profile { resid: number; tmin: number; tmax: number; mean: Float64Array; cnt: Float64Array }
 
@@ -121,7 +121,7 @@ function evalKnots(k: Knot[], t: number, out: number[]): void {
 }
 
 /** Ajusta linear e radial a um conjunto de amostras e aplica a guarda de fidelidade. null = rejeitado. */
-function fitGroup(s: Samples, bbox: number[]): Gradient | null {
+export function fitGroup(s: Samples, bbox: number[], gainAbs = -0.1, gainRel = 0, maxErr = 3.5): Gradient | null {
   if (s.n < 300) return null;
   const lin = fitLinear(s), rad = fitRadial(s, bbox);
   const m = rad.resid < lin.resid * 0.85 ? rad : lin;
@@ -153,7 +153,7 @@ function fitGroup(s: Samples, bbox: number[]): Gradient | null {
     eb += Math.sqrt(dist2(s.lab[i], s.band[i]));
   }
   eg /= s.n; eb /= s.n;
-  if (eg > eb + 0.1 || eg > 3.5) return null;
+  if (eb - eg < Math.max(gainAbs, gainRel * eb) || eg > maxErr) return null;
   if (m.kind === 'linear') {
     const dx = Math.cos(m.a), dy = Math.sin(m.a);
     const stops: GradientStop[] = knots.map((q) => ({ offset: Math.round(((q.t - p.tmin) / span) * 1e4) / 1e4, color: hexOf(q.c) }));

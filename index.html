@@ -40,6 +40,9 @@
           <button data-mode="original">Original</button>
         </div>
         <button id="wire" class="tog" aria-pressed="false">Raio‑X</button>
+        <button id="edit" class="tog" aria-pressed="false" title="Clique numa forma para selecioná-la; arraste para selecionar várias (Shift soma, Alt escolhe a de trás)">Editar formas</button>
+        <button id="shapemap" class="tog" aria-pressed="false" title="Mostra cada forma com uma cor sólida distinta, para ver como a imagem foi segmentada">Mapa de formas</button>
+        <div class="seg"><button id="undo" aria-label="Desfazer" title="Desfazer (Ctrl+Z)" disabled>↶</button><button id="redo" aria-label="Refazer" title="Refazer (Ctrl+Y)" disabled>↷</button></div>
         <div class="seg">
           <button id="zout" aria-label="Menos zoom">−</button>
           <button id="zfit">Ajustar</button>
@@ -53,6 +56,19 @@
       <div id="legend" class="legend" hidden><span><i style="border-color:#00b3ff"></i>reta</span><span><i style="border-color:#16a34a"></i>arco circular</span><span><i style="border-color:#a855f7"></i>arco elíptico</span><span><i style="border-color:#f59e0b"></i>curva Bézier</span><span><i style="border-color:#ff8a00;background:#ff8a00"></i>alças</span></div>
       </div>
       <aside id="palette" class="palette" aria-label="Paleta de cores do vetor">
+        <div id="shapebox" class="shapebox">
+          <h2>Formas <span id="shapecount" class="count"></span></h2>
+          <p id="shapehint" class="shapehint">Ative “Editar formas” e clique na prévia para selecionar.</p>
+          <div class="tools">
+            <button id="shdel" class="ghost" disabled title="Delete">Excluir</button>
+            <input id="shcolor" type="color" value="#888888" title="Recolorir as selecionadas" disabled />
+            <button id="shmerge" class="ghost" disabled title="As selecionadas adotam a tinta da maior">Fundir</button>
+            <button id="shsim" class="ghost" disabled title="Seleciona as formas de cor semelhante">Semelhantes</button>
+            <button id="shnone" class="ghost" disabled>Limpar seleção</button>
+          </div>
+          <div id="shaperows" class="shaperows"></div>
+          <div id="shhidden" class="hiddenlist"></div>
+        </div>
         <h2>Cores <span id="palcount" class="count"></span></h2>
         <div id="palrows" class="palrows"></div>
         <div class="palactions">

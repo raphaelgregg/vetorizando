@@ -27,10 +27,10 @@
       "hd95": 1.5
     },
     "photo": {
-      "ssim": 0.869,
-      "deltaE": 5.84,
-      "deltaEEdge": 11.29,
-      "deltaEFlat": 5.23,
+      "ssim": 0.875,
+      "deltaE": 5.49,
+      "deltaEEdge": 10.95,
+      "deltaEFlat": 4.91,
       "nodes": 3807
     },
     "lineart": {
@@ -67,8 +67,8 @@
     },
     "details": {
       "ssim": 0.994,
-      "deltaE": 0.17,
-      "deltaEEdge": 1.39,
+      "deltaE": 0.16,
+      "deltaEEdge": 1.26,
       "deltaEFlat": 0.05,
       "nodes": 860,
       "hd95": 1.5

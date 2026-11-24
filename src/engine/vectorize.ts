@@ -4,6 +4,7 @@ import { denoise } from './denoise';
 import { resolveTransitions } from './edges';
 import { fitLoop } from './fit';
 import { analyzeGradients } from './gradient';
+import { paintShapes } from './shapepaint';
 import { quantize } from './quantize';
 import { removeSpeckles } from './segment';
 import type { Gradient, Layer, Options, Pt, ProgressFn, RawImage, VDoc, VPath } from './types';
@@ -13,10 +14,11 @@ import type { Gradient, Layer, Options, Pt, ProgressFn, RawImage, VDoc, VPath } 
  * compartilham o valor. Uma grade ou moldura de 1 px é um único laço enorme com muitos furos — vista laço a laço
  * pareceria larga e seria ajustada com curvas/suavização.
  */
-function structureHydraulic(raw: Pt[][]): number[] {
+function structureHydraulic(raw: Pt[][]): { hyd: number[]; owner: number[] } {
   const n = raw.length;
   const out = new Array<number>(n).fill(Infinity);
-  if (!n) return out;
+  const ownerOf = raw.map((_, i) => i); // forma a que cada laço pertence (furo → seu contorno externo)
+  if (!n) return { hyd: out, owner: ownerOf };
   const area = raw.map((l) => loopArea(l));
   const per = raw.map((l) => { let s = 0; for (let i = 0; i < l.length; i++) { const q = l[(i + 1) % l.length]; s += Math.hypot(q.x - l[i].x, q.y - l[i].y); } return s; });
   let big = 0;
@@ -40,7 +42,7 @@ function structureHydraulic(raw: Pt[][]): number[] {
       if (p.x < b[0] || p.x > b[2] || p.y < b[1] || p.y > b[3] || !inside(p, raw[o])) continue;
       if (owner < 0 || Math.abs(area[o]) < Math.abs(area[owner])) owner = o;
     }
-    if (owner >= 0) { holes[owner].push(i); ink[owner] -= Math.abs(area[i]); perim[owner] += per[i]; }
+    if (owner >= 0) { ownerOf[i] = owner; holes[owner].push(i); ink[owner] -= Math.abs(area[i]); perim[owner] += per[i]; }
   });
   raw.forEach((_, i) => {
     if (Math.sign(area[i]) !== outerSign || perim[i] <= 0) return;
@@ -48,7 +50,7 @@ function structureHydraulic(raw: Pt[][]): number[] {
     out[i] = hyd;
     for (const hIdx of holes[i]) out[hIdx] = hyd;
   });
-  return out;
+  return { hyd: out, owner: ownerOf };
 }
 
 /** Pipeline principal: quantização → segmentação → contornos → curvas → camadas. */
@@ -164,6 +166,8 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
   const layers: Layer[] = [];
   let nodes = 0, paths = 0, rawPoints = 0, lines = 0, arcs = 0, ellipses = 0, curves = 0, gradients = 0;
   const minLoop = Math.max(1, o.speckle / 6);
+  let nextSid = 0;
+  const ownOf = new Map<Layer, Set<number>>(); // rótulos PRÓPRIOS de cada camada (sem os das camadas à frente, em "empilhado")
 
   interface Traced { paths: VPath[]; nodes: number; raw: number; lines: number; arcs: number; ellipses: number; curves: number }
   const trace = (set: Set<number>): Traced => {
@@ -182,13 +186,15 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
       if (Math.abs(loopArea(loop)) < minLoop) continue;
       raw.push(loop);
     }
-    const hyd = structureHydraulic(raw);
+    const { hyd, owner } = structureHydraulic(raw);
+    const sids = new Map<number, number>();
     const r: Traced = { paths: [], nodes: 0, raw: 0, lines: 0, arcs: 0, ellipses: 0, curves: 0 };
     raw.forEach((loop, k) => {
       const path = fitLoop(loop, { tolerance: o.lineFitTolerance, cornerThreshold: o.cornerThreshold, smooth: o.smooth, arcs: o.arcs, ellipses: o.ellipses, merge: internal.merge, hydraulic: hyd[k] });
       r.raw += loop.length;
       r.nodes += path.segs.length;
       for (const sg of path.segs) { if (sg.t === 'L') r.lines++; else if (sg.t === 'A') r.arcs++; else if (sg.t === 'E') r.ellipses++; else r.curves++; }
+      path.sid = sids.get(owner[k]) ?? (sids.set(owner[k], nextSid), nextSid++);
       r.paths.push(path);
     });
     return r;
@@ -203,7 +209,7 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
       const t = trace(new Set([...u.labels, ...after]));
       const layer: Layer = { color: hex(...palette[u.labels[0]]), paths: t.paths };
       commit(t);
-      if (layer.paths.length) layers.push(layer);
+      if (layer.paths.length) { layers.push(layer); ownOf.set(layer, new Set(u.labels)); }
       return;
     }
     // grupo de gradiente: região única com gradiente × bandas sólidas; a guarda exige não ter mais nós
@@ -215,17 +221,31 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     if (gt.paths.length && gt.nodes <= bandNodes) {
       let sr = 0, sg = 0, sb = 0, sa = 0;
       for (const l of u.labels) { sr += palette[l][0] * area[l]; sg += palette[l][1] * area[l]; sb += palette[l][2] * area[l]; sa += area[l]; }
-      layers.push({ color: hex(sr / sa, sg / sa, sb / sa), paths: gt.paths, gradient: u.grad, fallback: bandLayers });
+      const gl: Layer = { color: hex(sr / sa, sg / sa, sb / sa), paths: gt.paths, gradient: u.grad, fallback: bandLayers };
+      layers.push(gl);
+      ownOf.set(gl, new Set(u.labels));
       commit(gt);
       gradients++;
     } else {
       for (const b of bands) commit(b.t);
+      bands.forEach((b, j) => { const bl = bandLayers.find((l) => l.paths === b.t.paths); if (bl) ownOf.set(bl, new Set([b.l])); void j; });
       layers.push(...bandLayers);
     }
   });
 
+  let outLayers = layers;
+  if (o.shapeColors && o.drawStyle === 'fill') {
+    progress(0.96, 'Medindo a cor de cada forma');
+    const skip = new Uint8Array(labels.length);
+    for (const i of tr.idx) skip[i] = 1;
+    outLayers = paintShapes(layers, ownOf, img.data, labels, skip, w, h, o.gradients, dn.applied ? 3 : 1.2);
+  }
+  const shapeIds = new Set<number>();
+  for (const l of outLayers) for (const p of l.paths) if (p.sid !== undefined) shapeIds.add(p.sid);
+  gradients = outLayers.filter((l) => l.gradient).length;
+
   progress(1, 'Pronto');
   let transparent = false;
   for (let i = 0; i < labels.length && !transparent; i++) if (labels[i] < 0) transparent = true;
-  return { width: w, height: h, layers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: layers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored, noise: dn.noise.sigma, denoised: dn.applied, gradients } };
+  return { width: w, height: h, layers: outLayers, openBoundary: transparent || bg >= 0, stacking: o.stacking, stats: { nodes, paths, colors: outLayers.length, ms: performance.now() - t0, rawPoints, lines, arcs, ellipses, curves, recolored, noise: dn.noise.sigma, denoised: dn.applied, gradients, shapes: shapeIds.size } };
 }

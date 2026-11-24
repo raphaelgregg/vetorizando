@@ -137,3 +137,22 @@ code{font-size:.9em;background:var(--bg);padding:0 4px;border-radius:4px}
 @media (max-width:900px){.studio{grid-template-columns:1fr}.palette{max-height:none}}
 
 .sizebox input[type=color]{height:38px;padding:3px;cursor:pointer}
+
+.viewer.editing{cursor:crosshair}
+.selection{pointer-events:none}
+.selection path{fill:color-mix(in srgb,var(--accent) 38%,transparent);stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke}
+.marquee{position:absolute;z-index:5;border:1px dashed var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);pointer-events:none}
+.shapebox{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.shapebox h2{display:flex;align-items:center;gap:6px}
+.shapebox .tools{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.shapebox .tools .ghost{padding:5px 9px;font-size:13px}
+.shapebox .tools input[type=color]{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}
+.shaperows{display:grid;gap:2px;max-height:190px;overflow:auto;margin-top:6px}
+.shaperow{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center;padding:3px 4px;border-radius:8px;font-size:12px;cursor:pointer;border:1px solid transparent}
+.shaperow:hover{border-color:var(--line)}
+.shaperow.on{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:var(--accent)}
+.shaperow i{display:block;width:20px;height:16px;border-radius:4px;border:1px solid var(--line)}
+.shaperow span{color:var(--mute)}
+.shapehint{font-size:12px;color:var(--mute);margin:4px 0}
+.hiddenlist{margin-top:6px;font-size:12px;color:var(--mute)}
+.hiddenlist button{background:none;border:0;color:var(--accent);text-decoration:underline;padding:0 4px;font-size:12px}

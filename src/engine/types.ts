@@ -16,6 +16,8 @@ export interface VPath {
   segs: Seg[];
   /** contorno de traço fino (largura ≲ 4 px): não recebe traço de preenchimento de fendas (vazaria nos pixels de borda) */
   thin?: boolean;
+  /** identificador da FORMA (contorno externo + furos) dentro do documento: é a unidade de seleção/edição */
+  sid?: number;
 }
 
 export interface GradientStop {
@@ -59,6 +61,7 @@ export interface VDoc {
     noise: number; // nível de ruído/artefatos estimado (0 = imagem limpa)
     denoised: boolean; // o pré-filtro foi aplicado
     gradients: number; // regiões preenchidas com gradiente linear/radial
+    shapes: number; // formas (contorno + furos) do documento
   };
 }
 
@@ -88,6 +91,7 @@ export interface Options {
   edgeDelta: number; // limpeza de anti-aliasing (ΔE); 0 = desligado
   contourBlur: number; // sigma da suavização subpixel do contorno
   denoise: number; // pré-filtro de ruído/JPEG: 0 = desligado, 1 = automático (só age com evidência), >1 = mais forte
+  shapeColors: boolean; // cada forma recebe a cor (ou gradiente) medida nos pixels ORIGINAIS dela, não só a cor da camada
   gradients: boolean; // detectar gradientes lineares/radiais (SVG); desligado = só cores sólidas
   arcs: boolean; // permitir arcos circulares
   ellipses: boolean; // permitir arcos elípticos
@@ -109,6 +113,7 @@ export const DEFAULT_OPTIONS: Options = {
   edgeDelta: 8,
   contourBlur: 0,
   denoise: 1,
+  shapeColors: true,
   gradients: true,
   arcs: true,
   ellipses: true,
