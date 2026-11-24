@@ -1,5 +1,5 @@
 import { pathData } from '../engine/svg';
-import { ShapeEdits, editShapes, listShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
+import { ShapeEdits, editShapes, listShapes, mergeShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
 import { addStop, convertKind, defaultGradient, removeStop, reverse, setStop } from '../engine/gradedit';
 import type { Gradient, VDoc } from '../engine/types';
 
@@ -173,9 +173,9 @@ export function initShapes(host: ShapesHost) {
     if (!b || !doc || sel().size < 2) return;
     const shapes = listShapes(doc).filter((s) => sel().has(s.id));
     const main = shapes.reduce((a, c) => (c.area > a.area ? c : a));
-    host.commit(editShapes(b, host.edits(), ids().filter((i) => i !== main.id), { mergeInto: main.id }));
+    host.commit(mergeShapes(b, doc, host.edits(), ids()));
     host.setSelection(new Set([main.id]));
-    host.hint(`${shapes.length} formas fundidas em uma (a maior define a cor).`);
+    host.hint(`${shapes.length} formas unidas num único contorno (a maior define a cor).`);
   });
   $('shsim').addEventListener('click', () => {
     const doc = host.doc();

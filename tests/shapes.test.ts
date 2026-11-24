@@ -5,7 +5,7 @@ import { renderSvg } from '../bench/io';
 import { compare } from '../bench/metrics';
 import { applyPaletteEdits } from '../src/engine/palette';
 import { PRESETS } from '../src/engine/presets';
-import { ShapeEdits, applyShapeEdits, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
+import { ShapeEdits, applyShapeEdits, mergeShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
 import { toSVG } from '../src/engine/svg';
 import { Options, VPath } from '../src/engine/types';
 import { vectorize } from '../src/engine/vectorize';
@@ -83,20 +83,6 @@ describe('formas: edições', () => {
     const r = renderSvg(toSVG(d, opts()), 256);
     const i = (128 * 256 + 70) * 4;
     expect([r.data[i], r.data[i + 1], r.data[i + 2]]).toEqual([0, 255, 0]);
-  });
-
-  it('fundir: a forma adota a tinta da outra', () => {
-    const d = applyShapeEdits(doc, editShapes(doc, {}, [red.id], { mergeInto: blue.id }));
-    expect(d.layers.some((l) => l.color === red.color)).toBe(false);
-    expect(d.layers.filter((l) => l.color === blue.color).flatMap((l) => l.paths).length).toBeGreaterThanOrEqual(3);
-    // fundir = UMA forma (um id, um clique seleciona tudo), não só a mesma cor
-    const ds = listShapes(d);
-    expect(ds.length).toBe(sh.length - 1);
-    const m = ds.find((s) => s.id === blue.id)!;
-    expect(m.paths.length).toBe(blue.paths.length + red.paths.length);
-    expect(shapesAt(d, 70, 128)).toContain(blue.id);
-    expect(shapesAt(d, 70, 128)).not.toContain(red.id);
-    expect(d.stats.shapes).toBe(doc.stats.shapes - 1);
   });
 
   it('empilhado: excluir revela o que está atrás (sem borda aberta)', () => {
@@ -290,5 +276,80 @@ describe('edição manual de gradientes', () => {
     // voltar a cor sólida remove o gradiente
     const solid = applyShapeEdits(doc, editShapes(doc, editShapes(doc, {}, [s.id], { gradient: defaultGradient(s.bbox, s.color) }), [s.id], { color: '#112233' }));
     expect(toSVG(solid, opts())).not.toMatch(/Gradient/);
+  });
+});
+
+describe('fundir = união geométrica', () => {
+  const o = opts({ maxColors: 6, mergeDeltaE: 3 });
+  const area = (paths: VPath[]) => { let t = 0; for (const p of paths) { const f = flattenPath(p, 0.05); let s = 0; for (let i = 0; i < f.length; i++) { const q = f[(i + 1) % f.length]; s += f[i].x * q.y - q.x * f[i].y; } t += s / 2; } return Math.abs(t); };
+  const merged = (svg: string) => {
+    const doc = vectorize(ras(svg), o);
+    const sel = listShapes(doc).filter((s) => !s.color.startsWith('#ffffff'));
+    const e = mergeShapes(doc, doc, {}, sel.map((s) => s.id));
+    return { doc, sel, e, d: applyShapeEdits(doc, e) };
+  };
+
+  it('formas sobrepostas viram UM contorno com a área da união', () => {
+    const { sel, d } = merged(wrap('<rect x="20" y="60" width="100" height="80" fill="#d0342c"/><rect x="90" y="60" width="100" height="80" fill="#c02a22"/>'));
+    expect(sel.length).toBe(2);
+    const m = listShapes(d).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(m.length).toBe(1);
+    expect(m[0].paths.length).toBe(1); // um único contorno, não dois sobrepostos
+    expect(area(m[0].paths)).toBeGreaterThan(170 * 80 * 0.97);
+    expect(area(m[0].paths)).toBeLessThan(170 * 80 * 1.03);
+  });
+
+  it('formas coladas com uma fresta de 1 px também viram um contorno só (sem costura)', () => {
+    const { d } = merged(wrap('<rect x="20" y="60" width="90" height="80" fill="#d0342c"/><rect x="111" y="60" width="90" height="80" fill="#c02a22"/>'));
+    const m = listShapes(d).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(m.length).toBe(1);
+    expect(m[0].paths.length).toBe(1);
+  });
+
+  it('um furo coberto pela outra forma desaparece; um furo que sobra é preservado', () => {
+    const ring = '<path fill-rule="evenodd" fill="#2c5fd0" d="M40 40H216V216H40Z M90 90H166V166H90Z"/>';
+    const { d } = merged(wrap(ring + '<rect x="80" y="80" width="96" height="96" fill="#d0342c"/>'));
+    const m = listShapes(d).filter((s) => s.id >= 0 && !s.color.startsWith('#ffffff'));
+    expect(m.length).toBe(1);
+    expect(m[0].paths.length).toBe(1); // o furo foi preenchido
+    const { d: d2 } = merged(wrap(ring + '<rect x="84" y="84" width="30" height="30" fill="#d0342c"/>'));
+    const m2 = listShapes(d2).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(m2.length).toBe(1);
+    expect(m2[0].paths.length).toBe(2); // sobra um furo
+  });
+
+  it('a fusão é uma edição: some as formas de origem, mantém a tinta da maior e desfaz', () => {
+    const svg = wrap('<rect x="20" y="60" width="100" height="80" fill="#d0342c"/><rect x="90" y="60" width="100" height="80" fill="#2c5fd0"/>');
+    const { doc, sel, e, d } = merged(svg);
+    const big = sel.reduce((a, c) => (c.area > a.area ? c : a));
+    expect(d.stats.shapes).toBe(doc.stats.shapes - 1);
+    expect(listShapes(d).find((s) => s.id === big.id)!.color).toBe(big.color);
+    expect(applyShapeEdits(doc, {})).toBe(doc);
+    expect(Object.keys(e).length).toBe(2);
+  });
+
+  it('sobrevive a reprocessar: a união é recalculada nas formas novas', () => {
+    const svg = wrap('<rect x="20" y="60" width="100" height="80" fill="#d0342c"/><rect x="90" y="60" width="100" height="80" fill="#c02a22"/>');
+    const { e } = merged(svg);
+    const doc2 = vectorize(ras(svg), { ...o, smooth: 3 });
+    const r = remapShapeEdits(doc2, e);
+    expect(r.dropped).toBe(0);
+    const d2 = applyShapeEdits(doc2, r.edits);
+    const m = listShapes(d2).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(m.length).toBe(1);
+    expect(m[0].paths.length).toBe(1);
+  });
+
+  it('fundir de novo (A+B, depois +C) repassa as anteriores ao novo destino', () => {
+    const doc = vectorize(ras(wrap('<rect x="10" y="60" width="60" height="80" fill="#d0342c"/><rect x="60" y="60" width="60" height="80" fill="#c02a22"/><rect x="110" y="60" width="60" height="80" fill="#b0221a"/>')), o);
+    const sh = listShapes(doc).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(sh.length).toBeGreaterThanOrEqual(2);
+    const e1 = mergeShapes(doc, doc, {}, [sh[0].id, sh[1].id]);
+    const mid = applyShapeEdits(doc, e1);
+    const ids = listShapes(mid).filter((s) => !s.color.startsWith('#ffffff')).map((s) => s.id);
+    const e2 = mergeShapes(doc, mid, e1, ids);
+    const fin = listShapes(applyShapeEdits(doc, e2)).filter((s) => !s.color.startsWith('#ffffff'));
+    expect(fin.length).toBe(1);
+    expect(fin[0].paths.length).toBe(1);
   });
 });

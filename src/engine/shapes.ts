@@ -1,5 +1,6 @@
 import { deltaE, recount } from './palette';
 import { flattenPath } from './geom';
+import { unionShapes } from './union';
 import type { Gradient, Layer, Pt, VDoc, VPath } from './types';
 
 /**
@@ -22,7 +23,7 @@ export interface ShapeEdit {
   color?: string; // nova cor sólida (#rrggbb): substitui cor/gradiente
   gradient?: Gradient; // gradiente definido/ajustado à mão (substitui cor/gradiente detectado)
   geom?: VPath[]; // contornos editados à mão (substituem os da forma; não sobrevivem a reprocessar)
-  mergeInto?: number; // funde numa só forma com a outra (id da de destino): um objeto, uma tinta
+  absorbed?: number; // foi fundida na forma de destino (id): some, e o destino guarda a união como `geom`
   /** âncora para reaplicar a edição depois de reprocessar: um ponto dentro da forma e sua área */
   at?: [number, number];
   area?: number;
@@ -154,11 +155,10 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
     if (!s) continue;
     if (patch === null) { delete out[id]; continue; }
     const cur = { ...out[id], ...patch };
-    if (patch.color !== undefined) { delete cur.mergeInto; delete cur.gradient; }
-    if (patch.gradient !== undefined) { delete cur.mergeInto; delete cur.color; }
-    if (patch.mergeInto !== undefined) { delete cur.color; delete cur.gradient; delete cur.hidden; }
+    if (patch.color !== undefined) delete cur.gradient;
+    if (patch.gradient !== undefined) delete cur.color;
     if (!cur.hidden) delete cur.hidden;
-    if (!cur.hidden && cur.color === undefined && cur.mergeInto === undefined && !cur.gradient && !cur.geom) { delete out[id]; continue; }
+    if (!cur.hidden && cur.color === undefined && cur.absorbed === undefined && !cur.gradient && !cur.geom) { delete out[id]; continue; }
     out[id] = { ...cur, at: interiorPoint(s.paths), area: s.area };
   }
   return out;
@@ -172,16 +172,6 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
 export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
   if (!hasShapeEdits(edits)) return doc;
   const byId = new Map(listShapes(doc).map((s) => [s.id, s]));
-  /** forma efetiva: seguindo "fundir em" (as fundidas passam a ser UMA forma, com o id da de destino) */
-  const resolve = (id: number): number => {
-    let cur = id;
-    for (let k = 0; k < 16; k++) {
-      const m = edits[cur]?.mergeInto;
-      if (m === undefined || m === cur || !byId.has(m)) break;
-      cur = m;
-    }
-    return cur;
-  };
   let hidden = false;
   const emitted = new Set<number>();
   const layers: Layer[] = [];
@@ -191,21 +181,21 @@ export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
     let changed = false;
     for (const src of layer.paths) {
       if (src.sid === undefined) { keep.push(src); continue; }
-      const eff = resolve(src.sid), merged = eff !== src.sid, e = edits[eff];
-      // contornos editados à mão substituem TODOS os da forma (emitidos uma só vez)
+      const e = edits[src.sid];
+      if (e?.absorbed !== undefined && byId.has(e.absorbed)) { changed = true; continue; } // fundida: a união está no destino
+      if (!e) { keep.push(src); continue; }
+      // contornos editados à mão (ou a união de formas fundidas) substituem TODOS os da forma, emitidos uma só vez
       let pathsOut: VPath[] = [src];
-      if (e?.geom) { if (emitted.has(eff)) continue; emitted.add(eff); pathsOut = e.geom.map((g) => ({ ...g, sid: eff })); }
+      if (e.geom) { if (emitted.has(src.sid)) continue; emitted.add(src.sid); pathsOut = e.geom.map((g) => ({ ...g, sid: src.sid })); }
       for (const p of pathsOut) {
-        if (!merged && !e) { keep.push(p); continue; }
-        if (e?.hidden) { changed = true; hidden = true; continue; }
-        const t = byId.get(eff);
-        const paint: { color: string; gradient?: Gradient } | null = e?.gradient ? { color: e.color ?? meanStops(e.gradient), gradient: e.gradient } : e?.color ? { color: e.color } : merged && t ? { color: t.color, gradient: t.gradient } : null;
-        if (!paint) { if (e?.geom) changed = true; keep.push(merged ? { ...p, sid: eff } : p); continue; }
+        if (e.hidden) { changed = true; hidden = true; continue; }
+        const paint: { color: string; gradient?: Gradient } | null = e.gradient ? { color: e.color ?? meanStops(e.gradient), gradient: e.gradient } : e.color ? { color: e.color } : null;
+        if (!paint) { if (e.geom) changed = true; keep.push(p); continue; }
         changed = true;
-        const key = paint.gradient ? `g${eff}` : paint.color;
+        const key = paint.gradient ? `g${src.sid}` : paint.color;
         let g = groups.get(key);
         if (!g) groups.set(key, (g = paint.gradient ? { color: paint.color, paths: [], gradient: paint.gradient } : { color: paint.color, paths: [] }));
-        g.paths.push(merged ? { ...p, sid: eff } : p);
+        g.paths.push(p);
       }
     }
     if (!changed) { layers.push(layer); return; }
@@ -214,6 +204,23 @@ export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
   });
   const out: VDoc = { ...doc, layers, openBoundary: doc.openBoundary || (hidden && doc.stacking === 'cutouts') };
   out.stats = { ...recount(out), shapes: new Set(layers.flatMap((l) => l.paths.map((p) => p.sid))).size };
+  return out;
+}
+
+/**
+ * Funde as formas `ids` (do vetor exibido) numa só: a maior é o destino e recebe a UNIÃO geométrica dos contornos
+ * (um contorno único, sem costuras); as outras somem. Mantém a tinta do destino.
+ */
+export function mergeShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: number[]): ShapeEdits {
+  const sel = listShapes(doc).filter((s) => ids.includes(s.id));
+  if (sel.length < 2) return edits;
+  const main = sel.reduce((a, c) => (c.area > a.area ? c : a));
+  const baseShapes = new Map(listShapes(base).map((s) => [s.id, s]));
+  const anchor = (id: number): ShapeEdit => { const b = baseShapes.get(id); return b ? { at: interiorPoint(b.paths), area: b.area } : {}; };
+  const out: ShapeEdits = { ...edits };
+  for (const [k, e] of Object.entries(out)) if (e.absorbed !== undefined && e.absorbed !== main.id && sel.some((s) => s.id === e.absorbed)) out[Number(k)] = { ...e, absorbed: main.id }; // fusões anteriores passam ao novo destino
+  for (const s of sel) if (s.id !== main.id) out[s.id] = { absorbed: main.id, ...anchor(s.id) };
+  out[main.id] = { ...out[main.id], geom: unionShapes(sel.map((s) => s.paths)).map((p) => ({ ...p, sid: main.id })), ...anchor(main.id) };
   return out;
 }
 
@@ -235,6 +242,7 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     }
     if (best >= 0 && bd <= Math.log(2)) map.set(Number(k), best);
   }
+  const targets = new Set(Object.values(edits).filter((e) => e.absorbed !== undefined).map((e) => e.absorbed!));
   const out: ShapeEdits = {};
   let dropped = 0;
   for (const [k, e] of Object.entries(edits)) {
@@ -242,9 +250,16 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     if (nid === undefined) { dropped++; continue; }
     const s = shapes.find((x) => x.id === nid)!;
     const next: ShapeEdit = { ...e, at: interiorPoint(s.paths), area: s.area };
-    if (next.geom) { delete next.geom; dropped++; if (!next.hidden && next.color === undefined && next.mergeInto === undefined && !next.gradient) continue; } // geometria à mão não é remapeável
-    if (e.mergeInto !== undefined) { const t = map.get(e.mergeInto); if (t === undefined) { dropped++; continue; } next.mergeInto = t; }
+    if (e.absorbed !== undefined) { const t = map.get(e.absorbed); if (t === undefined) { dropped++; continue; } next.absorbed = t; }
+    if (next.geom && !targets.has(Number(k))) { delete next.geom; dropped++; if (!next.hidden && next.color === undefined && next.absorbed === undefined && !next.gradient) continue; } // geometria à mão não é remapeável
     out[nid] = next;
+  }
+  // fusões: a união é recalculada sobre as formas novas (sobrevive a reprocessar)
+  const byTarget = new Map<number, number[]>();
+  for (const [k, e] of Object.entries(out)) if (e.absorbed !== undefined) byTarget.set(e.absorbed, [...(byTarget.get(e.absorbed) ?? []), Number(k)]);
+  for (const [t, srcs] of byTarget) {
+    const parts = [t, ...srcs].map((id) => shapes.find((x) => x.id === id)).filter((x): x is Shape => !!x);
+    out[t] = { ...out[t], geom: unionShapes(parts.map((x) => x.paths)).map((p) => ({ ...p, sid: t })) };
   }
   return { edits: out, dropped };
 }
