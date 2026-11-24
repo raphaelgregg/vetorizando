@@ -172,7 +172,7 @@ function refreshFromEdits(live = false) {
   const paint = () => {
     refreshRaf = 0;
     if (!state.doc || !state.loaded) return;
-    state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight }, { mode: 'hex', gradients: state.svgColors.gradients });
+    state.svg = toSVG(state.doc, state.options, { width: l.origWidth, height: l.origHeight }, { mode: 'hex', gradients: state.svgColors.gradients, objects: state.svgColors.objects });
     // "Mapa de formas": só a prévia do estúdio mostra cada forma com uma cor sólida distinta; o SVG exportado não muda
     const view = state.mapView ? toSVG(shapeMapDoc(state.doc), { ...state.options, gapFiller: false, groupBy: 'none' }, { width: l.origWidth, height: l.origHeight }) : state.svg;
     viewer.setContent(l.url, state.doc.width, state.doc.height, view, state.doc);
@@ -442,6 +442,7 @@ const shapes = initShapes({
   commit: commitShapes,
   preview: previewShapes,
   hint: (t) => { $('shapehint').textContent = t; },
+  picking: (on) => $('viewer').classList.toggle('picking', on),
 });
 viewer.onPick = (x, y, shift, alt) => shapes.pick(x, y, shift, alt);
 viewer.onRect = (r, shift, alt) => shapes.rect(r, shift, alt);
@@ -478,6 +479,7 @@ window.addEventListener('keydown', (e) => {
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (state.nodeMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); overlay.deleteNode(); } // em "Editar pontos" Delete nunca exclui a forma inteira
   else if (state.editMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); shapes.del(); }
+  else if (state.editMode && e.key === 'Escape' && shapes.copying) shapes.cancelCopy();
   else if (state.editMode && e.key === 'Escape') { state.selection = new Set(); shapes.render(); viewer.setSelection(''); refreshOverlay(); }
 });
 
@@ -495,10 +497,12 @@ function syncCurrentColor() {
   $('gradwrap').hidden = !hasGrad;
   $('ccwrap').hidden = state.svgColors.mode !== 'currentColor';
 }
+const svgObj = $<HTMLInputElement>('svgobj');
+svgObj.addEventListener('change', () => { state.svgColors = { ...state.svgColors, objects: svgObj.checked }; refreshFromEdits(); icons.invalidate(); });
 const svgGrad = $<HTMLSelectElement>('svggrad');
 svgGrad.addEventListener('change', () => { state.svgColors = { ...state.svgColors, gradients: svgGrad.value !== 'solid' }; refreshFromEdits(); icons.invalidate(); });
 svgColor.addEventListener('change', () => {
-  state.svgColors = { mode: svgColor.value as SvgColors['mode'], currentColor: ccsel.value || undefined, gradients: state.svgColors.gradients };
+  state.svgColors = { mode: svgColor.value as SvgColors['mode'], currentColor: ccsel.value || undefined, gradients: state.svgColors.gradients, objects: state.svgColors.objects };
   syncCurrentColor();
   icons.invalidate();
 });

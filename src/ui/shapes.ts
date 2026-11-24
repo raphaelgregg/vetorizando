@@ -1,5 +1,5 @@
 import { pathData } from '../engine/svg';
-import { ShapeEdits, editShapes, listShapes, mergeShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
+import { ShapeEdits, copyPaint, editShapes, listShapes, mergeShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
 import { addStop, convertKind, defaultGradient, removeStop, reverse, setStop } from '../engine/gradedit';
 import type { Gradient, VDoc } from '../engine/types';
 
@@ -15,6 +15,8 @@ export interface ShapesHost {
   /** atualização ao vivo (arrastando/ajustando): não entra no histórico */
   preview(edits: ShapeEdits): void;
   hint(text: string): void;
+  /** modo "copiar cor de…" ligado/desligado (muda o cursor da prévia) */
+  picking(on: boolean): void;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -24,6 +26,18 @@ const css = (c: string, g?: Gradient): string => (g ? `linear-gradient(90deg,${g
 /** Painel e interações de edição de formas (seleção por clique/retângulo, excluir, recolorir, fundir, restaurar). */
 export function initShapes(host: ShapesHost) {
   const rows = $('shaperows');
+  let copying = false;
+  const setCopying = (on: boolean) => { copying = on; $('shcopy').setAttribute('aria-pressed', String(on)); host.picking(on); if (on) host.hint('Clique na forma cuja cor deseja copiar (na prévia ou na lista). Esc cancela.'); };
+  /** aplica a tinta da forma `sourceId` às selecionadas e sai do modo */
+  const applyCopy = (sourceId: number) => {
+    const b = host.base(), doc = host.doc();
+    setCopying(false);
+    if (!b || !doc) return;
+    const targets = [...host.selection()].filter((i) => i !== sourceId);
+    if (!targets.length) { host.hint('A forma de origem não pode ser a única selecionada.'); return; }
+    host.commit(copyPaint(b, doc, host.edits(), sourceId, targets));
+    host.hint(`Cor copiada para ${targets.length} ${targets.length === 1 ? 'forma' : 'formas'}.`);
+  };
   const sel = () => host.selection();
 
   /** dados de caminho das formas selecionadas (para o realce na prévia) */
@@ -45,7 +59,8 @@ export function initShapes(host: ShapesHost) {
     const hiddenIds = Object.entries(host.edits()).filter(([, e]) => e.hidden).map(([k]) => Number(k));
     $('shapecount').textContent = `(${shapes.length}${hiddenIds.length ? ` · ${hiddenIds.length} excluída${hiddenIds.length > 1 ? 's' : ''}` : ''})`;
     const n = sel().size;
-    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone']) $<HTMLButtonElement>(id).disabled = id === 'shmerge' ? n < 2 : n === 0;
+    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone', 'shcopy']) $<HTMLButtonElement>(id).disabled = id === 'shmerge' ? n < 2 : n === 0;
+    if (n === 0 && copying) setCopying(false);
     $<HTMLInputElement>('shcolor').disabled = n === 0;
     if (n === 1) { const s = shapes.find((x) => sel().has(x.id)); if (s && !s.gradient) $<HTMLInputElement>('shcolor').value = s.color; }
     host.hint(n ? `${n} ${n === 1 ? 'forma selecionada' : 'formas selecionadas'}` : 'Clique numa forma para selecioná-la; arraste para selecionar várias (Shift soma · Alt escolhe a de trás).');
@@ -63,7 +78,7 @@ export function initShapes(host: ShapesHost) {
       a.textContent = s.area >= 1000 ? `${(s.area / 1000).toFixed(1)}k px²` : `${Math.round(s.area)} px²`;
       t.append(m);
       r.append(sw, t, a);
-      r.addEventListener('click', (e) => toggle(s.id, e.shiftKey || e.ctrlKey || e.metaKey));
+      r.addEventListener('click', (e) => { if (copying) applyCopy(s.id); else toggle(s.id, e.shiftKey || e.ctrlKey || e.metaKey); });
       rows.append(r);
     }
     if (shapes.length > list.length) rows.append(Object.assign(document.createElement('span'), { textContent: `… e mais ${shapes.length - list.length} formas menores (selecione na prévia)`, className: 'shapehint' }));
@@ -147,6 +162,7 @@ export function initShapes(host: ShapesHost) {
     const doc = host.doc();
     if (!doc) return;
     const hit = shapesAt(doc, x, y);
+    if (copying) { if (hit.length) applyCopy(hit[0]); return; } // modo conta-gotas: o clique escolhe a ORIGEM da cor
     if (!hit.length) { if (!shift) host.setSelection(new Set()); return; }
     // Alt: a próxima forma atrás da já selecionada (úteis em camadas empilhadas)
     let id = hit[0];
@@ -157,6 +173,7 @@ export function initShapes(host: ShapesHost) {
   function rect(r: [number, number, number, number], shift: boolean, alt: boolean) {
     const doc = host.doc();
     if (!doc) return;
+    if (copying) return;
     const ids = shapesInRect(doc, r, alt); // Alt: também as que apenas tocam o retângulo
     const s = shift ? new Set(sel()) : new Set<number>();
     for (const id of ids) s.add(id);
@@ -177,6 +194,7 @@ export function initShapes(host: ShapesHost) {
     host.setSelection(new Set([main.id]));
     host.hint(`${shapes.length} formas unidas num único contorno (a maior define a cor).`);
   });
+  $('shcopy').addEventListener('click', () => setCopying(!copying));
   $('shsim').addEventListener('click', () => {
     const doc = host.doc();
     if (!doc || !sel().size) return;
@@ -186,5 +204,5 @@ export function initShapes(host: ShapesHost) {
   });
   $('shnone').addEventListener('click', () => host.setSelection(new Set()));
 
-  return { render, overlay, pick, rect, del };
+  return { render, overlay, pick, rect, del, cancelCopy: () => { if (copying) setCopying(false); }, get copying() { return copying; } };
 }

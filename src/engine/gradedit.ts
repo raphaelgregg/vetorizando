@@ -66,3 +66,12 @@ export function moveHandle(g: Gradient, i: number, x: number, y: number): Gradie
   if (g.kind === 'linear') return i === 0 ? { ...g, x1: x, y1: y } : { ...g, x2: x, y2: y };
   return i === 0 ? { ...g, cx: x, cy: y } : { ...g, r: Math.max(1, Math.hypot(x - g.cx, y - g.cy)) };
 }
+
+/** leva um gradiente de uma forma para outra: a geometria é reescalada da caixa de origem para a de destino */
+export function retarget(g: Gradient, from: BBox, to: BBox): Gradient {
+  const fw = Math.max(1e-6, from[2] - from[0]), fh = Math.max(1e-6, from[3] - from[1]);
+  const sx = (to[2] - to[0]) / fw, sy = (to[3] - to[1]) / fh;
+  const mx = (x: number) => to[0] + (x - from[0]) * sx, my = (y: number) => to[1] + (y - from[1]) * sy;
+  if (g.kind === 'linear') return { ...g, x1: mx(g.x1), y1: my(g.y1), x2: mx(g.x2), y2: my(g.y2) };
+  return { ...g, cx: mx(g.cx), cy: my(g.cy), r: Math.max(1, g.r * Math.sqrt(Math.abs(sx * sy))) };
+}

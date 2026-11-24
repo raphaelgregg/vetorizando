@@ -163,7 +163,7 @@ describe('cores do SVG: hex, currentColor e classes CSS editáveis', () => {
     const svg = toSVG(logo, logoOpts, {}, { mode: 'classes' });
     const rules = [...svg.matchAll(/\.c(\d+)\{fill:(#[0-9a-f]{6})\}\.s\1\{stroke:\2\}/g)];
     expect(rules.length).toBe(logo.layers.length);
-    expect(svg).toMatch(/<path class="c\d+" fill-rule="nonzero"/);
+    expect(svg).toMatch(/<path id="forma-\d+" class="c\d+" fill-rule="nonzero"/);
     expect(svg).not.toMatch(/fill="#[0-9a-f]{6}"/);
     const a = renderSvg(toSVG(logo, logoOpts), 256), b = renderSvg(svg, 256);
     expect(compare(a, b).ssim).toBeGreaterThan(0.9999);

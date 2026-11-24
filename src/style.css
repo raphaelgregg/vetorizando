@@ -178,3 +178,4 @@ code{font-size:.9em;background:var(--bg);padding:0 4px;border-radius:4px}
 .stoprow button{background:none;border:1px solid var(--line);border-radius:6px;padding:0}
 .gradbox .tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .gradbox select{padding:4px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.viewer.picking{cursor:copy}

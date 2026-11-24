@@ -35,6 +35,8 @@ export interface SvgColors {
   currentColor?: string;
   /** `false` = camadas com gradiente viram bandas de cor sólida (padrão: usar `<linearGradient>`/`<radialGradient>`) */
   gradients?: boolean;
+  /** `false` = um `<path>` por camada de cor (compacto); padrão: um `<path id="forma-N">` por FORMA (objetos editáveis em outros programas) */
+  objects?: boolean;
 }
 
 export const HEX_COLORS: SvgColors = { mode: 'hex' };
@@ -92,7 +94,11 @@ export function svgBody(doc: VDoc, o: Options, colors: SvgColors = HEX_COLORS): 
     }
     for (const layer of g.layers) {
       const attrs = fill ? `${gradIds.has(layer) ? `fill="url(#${gradIds.get(layer)})"` : attr(layer.color, 'fill')} fill-rule="nonzero"` : `fill="none" ${attr(layer.color, 'stroke')} stroke-width="1" vector-effect="non-scaling-stroke"`;
-      parts.push(`<path ${attrs} d="${dOf.get(layer)}"/>`);
+      if (colors.objects === false) { parts.push(`<path ${attrs} d="${dOf.get(layer)}"/>`); continue; }
+      // um objeto por forma (contorno externo + furos); caminhos sem id de forma ficam juntos
+      const byShape = new Map<number, VPath[]>();
+      for (const p of layer.paths) { const k = p.sid ?? -1; byShape.set(k, [...(byShape.get(k) ?? []), p]); }
+      for (const [sid, ps] of byShape) parts.push(`<path${sid >= 0 ? ` id="forma-${sid}"` : ''} ${attrs} d="${ps.map(pathData).join('')}"/>`);
     }
     if (g.name) parts.push('</g>');
   }

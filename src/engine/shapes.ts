@@ -1,5 +1,6 @@
 import { deltaE, recount } from './palette';
 import { flattenPath } from './geom';
+import { retarget } from './gradedit';
 import { unionShapes } from './union';
 import type { Gradient, Layer, Pt, VDoc, VPath } from './types';
 
@@ -262,6 +263,23 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     out[t] = { ...out[t], geom: unionShapes(parts.map((x) => x.paths)).map((p) => ({ ...p, sid: t })) };
   }
   return { edits: out, dropped };
+}
+
+/**
+ * Copia a tinta (cor sólida ou gradiente, reescalado para a caixa de cada destino) da forma `sourceId` para as
+ * formas `targetIds`. Usa o vetor exibido: copia exatamente o que se vê.
+ */
+export function copyPaint(base: VDoc, doc: VDoc, edits: ShapeEdits, sourceId: number, targetIds: number[]): ShapeEdits {
+  const all = new Map(listShapes(doc).map((s) => [s.id, s]));
+  const src = all.get(sourceId);
+  if (!src) return edits;
+  let out = edits;
+  for (const id of targetIds) {
+    const t = all.get(id);
+    if (!t || id === sourceId) continue;
+    out = editShapes(base, out, [id], src.gradient ? { gradient: retarget(src.gradient, src.bbox, t.bbox) } : { color: src.color });
+  }
+  return out;
 }
 
 /** Documento de "mapa de formas": cada forma com uma cor sólida distinta (para ver e escolher a segmentação). */

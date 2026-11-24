@@ -5,7 +5,7 @@ import { renderSvg } from '../bench/io';
 import { compare } from '../bench/metrics';
 import { applyPaletteEdits } from '../src/engine/palette';
 import { PRESETS } from '../src/engine/presets';
-import { ShapeEdits, applyShapeEdits, mergeShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
+import { ShapeEdits, applyShapeEdits, copyPaint, mergeShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
 import { toSVG } from '../src/engine/svg';
 import { Options, VPath } from '../src/engine/types';
 import { vectorize } from '../src/engine/vectorize';
@@ -172,7 +172,7 @@ describe('fragmentos de baixo contraste (contas, pontas) não viram formas', () 
   });
 });
 
-import { addStop, colorAt, convertKind, defaultGradient, handles, moveHandle, removeStop, reverse, setStop } from '../src/engine/gradedit';
+import { addStop, colorAt, convertKind, defaultGradient, handles, moveHandle, removeStop, retarget, reverse, setStop } from '../src/engine/gradedit';
 import { fromNodes, insertNode, moveHandle as moveH, moveNode, nearestOnPath, removeNode, toNodes, toggleEdge } from '../src/engine/nodeedit';
 import { flattenPath } from '../src/engine/geom';
 
@@ -351,5 +351,62 @@ describe('fundir = união geométrica', () => {
     const fin = listShapes(applyShapeEdits(doc, e2)).filter((s) => !s.color.startsWith('#ffffff'));
     expect(fin.length).toBe(1);
     expect(fin[0].paths.length).toBe(1);
+  });
+});
+
+describe('objetos no SVG e cópia de cor', () => {
+  const o = opts({ maxColors: 6, mergeDeltaE: 3 });
+  const svg = wrap('<rect x="10" y="60" width="50" height="80" fill="#d0342c"/><rect x="100" y="60" width="50" height="80" fill="#d0342c"/><rect x="190" y="60" width="50" height="80" fill="#2c5fd0"/>');
+  const doc = vectorize(ras(svg), o);
+
+  it('cada forma é um <path id="forma-N"> próprio; "camadas por cor" mantém um por camada', () => {
+    const shapes = listShapes(doc);
+    const objs = toSVG(doc, o);
+    for (const s of shapes) expect(objs).toContain(`id="forma-${s.id}"`);
+    expect((objs.match(/<path id="forma-/g) ?? []).length).toBe(shapes.length);
+    const compact = toSVG(doc, o, {}, { mode: 'hex', objects: false });
+    expect(compact).not.toContain('id="forma-');
+    expect((compact.match(/<path/g) ?? []).length).toBeLessThan((objs.match(/<path/g) ?? []).length);
+    // mesma imagem
+    const a = renderSvg(objs, 256), b = renderSvg(compact, 256);
+    expect(compare(a, b).ssim).toBeGreaterThan(0.9999);
+  });
+
+  it('forma fundida = um objeto (um <path> com todos os contornos)', () => {
+    const reds = listShapes(doc).filter((s) => s.color.startsWith('#d0'));
+    expect(reds.length).toBe(2);
+    const e = mergeShapes(doc, doc, {}, reds.map((s) => s.id));
+    const d = applyShapeEdits(doc, e);
+    const out = toSVG(d, o);
+    const main = reds.reduce((a, c) => (c.area > a.area ? c : a));
+    expect(out.match(new RegExp(`id="forma-${main.id}"`, 'g'))!.length).toBe(1);
+    expect(out.match(/<path id="forma-/g)!.length).toBe(listShapes(doc).length - 1);
+  });
+
+  it('copiar cor: as selecionadas adotam a cor da forma de origem (só elas)', () => {
+    const sh = listShapes(doc);
+    const blue = sh.find((s) => s.color.startsWith('#2c'))!, reds = sh.filter((s) => s.color.startsWith('#d0'));
+    const e = copyPaint(doc, doc, {}, blue.id, reds.map((s) => s.id));
+    const d = applyShapeEdits(doc, e);
+    const cols = listShapes(d).filter((s) => !s.color.startsWith('#ffffff')).map((s) => s.color);
+    expect(cols.length).toBe(3);
+    expect(new Set(cols).size).toBe(1);
+    expect(cols[0]).toBe(blue.color);
+    // a origem não vira destino de si mesma
+    expect(copyPaint(doc, doc, {}, blue.id, [blue.id])).toEqual({});
+  });
+
+  it('copiar um gradiente reescala a geometria para a caixa de cada destino', () => {
+    const g = defaultGradient([0, 0, 100, 50], '#c8a064');
+    const r = retarget(g, [0, 0, 100, 50], [200, 100, 400, 300]);
+    expect(r.kind === 'linear' && [r.x1, r.y1, r.x2, r.y2]).toEqual([200, 200, 400, 200]);
+    const rad = retarget(convertKind(g, 'radial', [0, 0, 100, 50]), [0, 0, 100, 50], [0, 0, 200, 100]);
+    expect(rad.kind === 'radial' && rad.cx).toBeCloseTo(100, 6);
+    const grad = applyShapeEdits(doc, editShapes(doc, {}, [listShapes(doc)[1].id], { gradient: g }));
+    const src = listShapes(grad).find((s) => s.gradient)!;
+    const tgt = listShapes(grad).find((s) => s.id !== src.id && s.color.startsWith('#2c'))!;
+    const e2 = copyPaint(doc, grad, {}, src.id, [tgt.id]);
+    const final = applyShapeEdits(doc, e2);
+    expect(listShapes(final).find((s) => s.id === tgt.id)!.gradient?.kind).toBe('linear');
   });
 });

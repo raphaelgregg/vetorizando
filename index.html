@@ -63,6 +63,7 @@
           <div class="tools">
             <button id="shdel" class="ghost" disabled title="Delete">Excluir</button>
             <input id="shcolor" type="color" value="#888888" title="Recolorir as selecionadas" disabled />
+            <button id="shcopy" class="ghost" disabled aria-pressed="false" title="Copia a cor (ou gradiente) de outra forma para as selecionadas: clique neste botão e depois na forma de origem (na prévia ou na lista)">Copiar cor de…</button>
             <button id="shmerge" class="ghost" disabled title="Une as formas selecionadas num único contorno (a maior define a cor)">Fundir</button>
             <button id="shsim" class="ghost" disabled title="Seleciona as formas de cor semelhante">Semelhantes</button>
             <button id="shnone" class="ghost" disabled>Limpar seleção</button>
@@ -90,6 +91,7 @@
         <button id="palsimbtn" class="ghost wide">Mesclar cores semelhantes</button>
         <p id="palhint" class="summary" aria-live="polite"></p>
         <div class="svgcolors">
+          <label class="chk"><input id="svgobj" type="checkbox" checked /> Um objeto por forma (cada forma vira um &lt;path id="forma-N"&gt; editável)</label>
           <label>Cores no SVG exportado
             <select id="svgcolor">
               <option value="hex">Cores fixas (hex)</option>
