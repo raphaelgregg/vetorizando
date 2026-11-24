@@ -179,3 +179,15 @@ code{font-size:.9em;background:var(--bg);padding:0 4px;border-radius:4px}
 .gradbox .tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .gradbox select{padding:4px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
 .viewer.picking{cursor:copy}
+
+.shaperows{max-height:260px}
+.shaperow{grid-template-columns:24px 22px 1fr auto;content-visibility:auto;contain-intrinsic-size:auto 26px;position:relative}
+.shaperow .eye{background:none;border:0;padding:0;font-size:14px;line-height:1;cursor:pointer;color:var(--ink)}
+.shaperow.hid{opacity:.5}
+.shaperow.hid .eye{text-decoration:line-through}
+.shaperow.drop-top::before,.shaperow.drop-bottom::after{content:'';position:absolute;left:0;right:0;height:2px;background:var(--accent)}
+.shaperow.drop-top::before{top:-1px}
+.shaperow.drop-bottom::after{bottom:-1px}
+.shaperow[draggable=true]{cursor:grab}
+.zbar{align-items:center}
+.zbar .ghost{padding:3px 10px;font-size:15px}

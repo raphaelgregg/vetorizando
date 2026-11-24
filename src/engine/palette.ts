@@ -98,13 +98,23 @@ export function applyPaletteEdits(base: VDoc, edits: PaletteEdits = {}): VDoc {
   }
   let layers = kept;
   if (base.stacking === 'cutouts') {
-    const by = new Map<string, Layer>();
-    for (const l of kept) {
-      if (l.gradient) { by.set(`${l.color}#g${by.size}`, l); continue; }
-      const ex = by.get(l.color);
-      if (ex) ex.paths = [...ex.paths, ...l.paths]; else by.set(l.color, { color: l.color, paths: [...l.paths] });
+    if (base.ordered) {
+      // ordem de camadas definida pelo usuário: só junta camadas de mesma cor CONSECUTIVAS (não reordena nada)
+      layers = [];
+      for (const l of kept) {
+        const last = layers[layers.length - 1];
+        if (last && !l.gradient && !last.gradient && last.color === l.color) last.paths = [...last.paths, ...l.paths];
+        else layers.push(l.gradient ? l : { color: l.color, paths: [...l.paths] });
+      }
+    } else {
+      const by = new Map<string, Layer>();
+      for (const l of kept) {
+        if (l.gradient) { by.set(`${l.color}#g${by.size}`, l); continue; }
+        const ex = by.get(l.color);
+        if (ex) ex.paths = [...ex.paths, ...l.paths]; else by.set(l.color, { color: l.color, paths: [...l.paths] });
+      }
+      layers = [...by.values()];
     }
-    layers = [...by.values()];
   }
   const doc: VDoc = { ...base, layers, openBoundary: base.openBoundary || hidden };
   doc.stats = recount(doc);

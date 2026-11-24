@@ -24,6 +24,7 @@ export interface ShapeEdit {
   color?: string; // nova cor sólida (#rrggbb): substitui cor/gradiente
   gradient?: Gradient; // gradiente definido/ajustado à mão (substitui cor/gradiente detectado)
   geom?: VPath[]; // contornos editados à mão (substituem os da forma; não sobrevivem a reprocessar)
+  z?: number; // posição de desenho (camadas), no espaço de índices do vetor base; ausente = ordem natural
   absorbed?: number; // foi fundida na forma de destino (id): some, e o destino guarda a união como `geom`
   /** âncora para reaplicar a edição depois de reprocessar: um ponto dentro da forma e sua área */
   at?: [number, number];
@@ -159,7 +160,7 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
     if (patch.color !== undefined) delete cur.gradient;
     if (patch.gradient !== undefined) delete cur.color;
     if (!cur.hidden) delete cur.hidden;
-    if (!cur.hidden && cur.color === undefined && cur.absorbed === undefined && !cur.gradient && !cur.geom) { delete out[id]; continue; }
+    if (!cur.hidden && cur.color === undefined && cur.absorbed === undefined && !cur.gradient && !cur.geom && cur.z === undefined) { delete out[id]; continue; }
     out[id] = { ...cur, at: interiorPoint(s.paths), area: s.area };
   }
   return out;
@@ -203,8 +204,37 @@ export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
     if (keep.length) layers.push({ ...layer, paths: keep, fallback: undefined });
     layers.push(...groups.values());
   });
-  const out: VDoc = { ...doc, layers, openBoundary: doc.openBoundary || (hidden && doc.stacking === 'cutouts') };
-  out.stats = { ...recount(out), shapes: new Set(layers.flatMap((l) => l.paths.map((p) => p.sid))).size };
+  const baseIdx = new Map([...byId.keys()].map((id, i) => [id, i]));
+  const reordered = Object.values(edits).some((e) => e.z !== undefined);
+  const out: VDoc = { ...doc, layers: reordered ? reorderLayers(layers, edits, baseIdx) : layers, openBoundary: doc.openBoundary || (hidden && doc.stacking === 'cutouts') };
+  if (reordered) out.ordered = true;
+  out.stats = { ...recount(out), shapes: new Set(out.layers.flatMap((l) => l.paths.map((p) => p.sid))).size };
+  return out;
+}
+
+/** Reordena as formas pelas posições `z` (camadas), reagrupando formas consecutivas da mesma camada de origem. */
+function reorderLayers(layers: Layer[], edits: ShapeEdits, baseIdx: Map<number, number>): Layer[] {
+  interface Entry { key: number; pos: number; src: Layer; paths: VPath[] }
+  const entries: Entry[] = [];
+  let pos = 0;
+  for (const L of layers) {
+    const by = new Map<number, Entry>();
+    for (const p of L.paths) {
+      const k = p.sid ?? -1 - pos;
+      let e = by.get(k);
+      if (!e) { e = { key: p.sid !== undefined && baseIdx.has(p.sid) ? (edits[p.sid]?.z ?? baseIdx.get(p.sid)!) : pos, pos: pos++, src: L, paths: [] }; by.set(k, e); entries.push(e); }
+      e.paths.push(p);
+    }
+  }
+  entries.sort((a, b) => a.key - b.key || a.pos - b.pos);
+  const out: Layer[] = [];
+  let last: Entry | null = null;
+  for (const e of entries) {
+    if (last && last.src === e.src) out[out.length - 1].paths.push(...e.paths);
+    else out.push({ ...e.src, paths: [...e.paths] });
+    last = e;
+  }
+  for (const l of out) if (l.fallback && l.paths.length !== layers.find((x) => x.fallback === l.fallback)!.paths.length) l.fallback = undefined; // bandas só valem para a camada inteira
   return out;
 }
 
@@ -229,7 +259,7 @@ export function mergeShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: numbe
  * Reaplica as edições (feitas sobre um vetor antigo) a um vetor reprocessado, pelas âncoras: a forma nova é a que
  * contém o ponto e tem a área mais próxima da antiga (razão entre 0,5× e 2×). Edições sem correspondência caem.
  */
-export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: ShapeEdits; dropped: number } {
+export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: ShapeEdits; dropped: number; orderLost: boolean } {
   const shapes = listShapes(newDoc);
   const map = new Map<number, number>();
   for (const [k, e] of Object.entries(edits)) {
@@ -245,8 +275,11 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
   }
   const targets = new Set(Object.values(edits).filter((e) => e.absorbed !== undefined).map((e) => e.absorbed!));
   const out: ShapeEdits = {};
-  let dropped = 0;
-  for (const [k, e] of Object.entries(edits)) {
+  let dropped = 0, orderLost = false;
+  for (const [k, e0] of Object.entries(edits)) {
+    const e = { ...e0 };
+    if (e.z !== undefined) { orderLost = true; delete e.z; } // a ordem de camadas é por posição: não é remapeável
+    if (!e.hidden && e.color === undefined && e.absorbed === undefined && !e.gradient && !e.geom && !e.at) continue; // só tinha ordem
     const nid = map.get(Number(k));
     if (nid === undefined) { dropped++; continue; }
     const s = shapes.find((x) => x.id === nid)!;
@@ -262,7 +295,7 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     const parts = [t, ...srcs].map((id) => shapes.find((x) => x.id === id)).filter((x): x is Shape => !!x);
     out[t] = { ...out[t], geom: unionShapes(parts.map((x) => x.paths)).map((p) => ({ ...p, sid: t })) };
   }
-  return { edits: out, dropped };
+  return { edits: out, dropped, orderLost };
 }
 
 /**
@@ -297,4 +330,56 @@ function hslHex(h: number, s: number, l: number): string {
   const k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
   const f = (n: number) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
   return '#' + [f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** Ordem de desenho efetiva (fundo → frente) de TODAS as formas do vetor base, inclusive ocultas/fundidas. */
+export function effectiveOrder(base: VDoc, edits: ShapeEdits): number[] {
+  const ids = listShapes(base).map((s) => s.id);
+  return ids.map((id, i) => ({ id, i, k: edits[id]?.z ?? i })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.id);
+}
+
+export type ReorderOp = 'front' | 'back' | 'forward' | 'backward' | { inFrontOf: number } | { behind: number };
+
+/**
+ * Muda a ordem de desenho das formas `ids`: para a frente/fundo, um passo (pulando as formas invisíveis) ou logo
+ * à frente/atrás de outra (arrastar e soltar). Devolve as edições com as posições `z` das formas deslocadas.
+ */
+export function reorderShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: number[], op: ReorderOp): ShapeEdits {
+  const order = effectiveOrder(base, edits);
+  const sel = new Set(ids.filter((i) => order.includes(i)));
+  if (!sel.size) return edits;
+  const visible = new Set(listShapes(doc).map((s) => s.id));
+  let a = [...order];
+  const move = (from: number, to: number) => { const [x] = a.splice(from, 1); a.splice(to, 0, x); };
+  if (op === 'front') a = [...a.filter((x) => !sel.has(x)), ...a.filter((x) => sel.has(x))];
+  else if (op === 'back') a = [...a.filter((x) => sel.has(x)), ...a.filter((x) => !sel.has(x))];
+  else if (op === 'forward') {
+    for (let i = a.length - 1; i >= 0; i--) {
+      if (!sel.has(a[i])) continue;
+      let j = i + 1;
+      while (j < a.length && !(visible.has(a[j]) && !sel.has(a[j]))) j++;
+      if (j < a.length) move(i, j);
+    }
+  } else if (op === 'backward') {
+    for (let i = 0; i < a.length; i++) {
+      if (!sel.has(a[i])) continue;
+      let j = i - 1;
+      while (j >= 0 && !(visible.has(a[j]) && !sel.has(a[j]))) j--;
+      if (j >= 0) { move(i, j); }
+    }
+  } else {
+    const t = 'inFrontOf' in op ? op.inFrontOf : op.behind;
+    if (sel.has(t)) return edits;
+    const rest = a.filter((x) => !sel.has(x)), moved = a.filter((x) => sel.has(x));
+    const at = rest.indexOf(t) + ('inFrontOf' in op ? 1 : 0);
+    a = [...rest.slice(0, at), ...moved, ...rest.slice(at)];
+  }
+  const natural = listShapes(base).map((s) => s.id);
+  const out: ShapeEdits = { ...edits };
+  a.forEach((id, idx) => {
+    const cur = { ...out[id] };
+    if (idx === natural.indexOf(id)) delete cur.z; else cur.z = idx;
+    if (Object.keys(cur).length) out[id] = cur; else delete out[id];
+  });
+  return out;
 }

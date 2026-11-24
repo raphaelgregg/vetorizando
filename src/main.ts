@@ -150,7 +150,7 @@ async function process() {
       const r = remapShapeEdits(doc, state.shapeEdits);
       state.shapeEdits = r.edits;
       state.shapeCommitted = r.edits;
-      if (r.dropped) showMsg(`${r.dropped} edição(ões) de formas não encontraram correspondência após reprocessar e foram descartadas.`);
+      if (r.dropped || r.orderLost) showMsg([r.dropped ? `${r.dropped} edição(ões) de formas não encontraram correspondência após reprocessar e foram descartadas.` : '', r.orderLost ? 'A ordem das camadas foi redefinida ao reprocessar.' : ''].filter(Boolean).join(' '));
     }
     state.history = []; state.future = []; state.selection = new Set();
     refreshFromEdits();
@@ -475,6 +475,7 @@ $('shapemap').addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (state.step !== 2 || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
   const mod = e.ctrlKey || e.metaKey;
+  if (mod && state.editMode && (e.code === 'BracketRight' || e.code === 'BracketLeft')) { e.preventDefault(); const up = e.code === 'BracketRight'; shapes.reorder(e.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward'); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (state.nodeMode && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); overlay.deleteNode(); } // em "Editar pontos" Delete nunca exclui a forma inteira

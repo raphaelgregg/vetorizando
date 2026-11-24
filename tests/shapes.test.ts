@@ -5,7 +5,7 @@ import { renderSvg } from '../bench/io';
 import { compare } from '../bench/metrics';
 import { applyPaletteEdits } from '../src/engine/palette';
 import { PRESETS } from '../src/engine/presets';
-import { ShapeEdits, applyShapeEdits, copyPaint, mergeShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
+import { ShapeEdits, applyShapeEdits, copyPaint, effectiveOrder, mergeShapes, reorderShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
 import { toSVG } from '../src/engine/svg';
 import { Options, VPath } from '../src/engine/types';
 import { vectorize } from '../src/engine/vectorize';
@@ -408,5 +408,94 @@ describe('objetos no SVG e cópia de cor', () => {
     const e2 = copyPaint(doc, grad, {}, src.id, [tgt.id]);
     const final = applyShapeEdits(doc, e2);
     expect(listShapes(final).find((s) => s.id === tgt.id)!.gradient?.kind).toBe('linear');
+  });
+});
+
+describe('camadas: ordem de desenho', () => {
+  // três quadrados sobrepostos (empilhado): vermelho (fundo), verde, azul (frente)
+  const svg = wrap('<rect x="30" y="30" width="120" height="120" fill="#d0342c"/><rect x="70" y="70" width="120" height="120" fill="#2cb34a"/><rect x="110" y="110" width="120" height="120" fill="#2c5fd0"/>');
+  const o = opts({ stacking: 'stacked', gapFiller: false, maxColors: 6, mergeDeltaE: 3 });
+  const doc = vectorize(ras(svg), o);
+  const sh = listShapes(doc);
+  const by = (c: string) => sh.find((s) => s.color.startsWith(c))!;
+  const red = by('#d0'), green = by('#2c'), blue = sh.find((s) => s.color === '#2c5fd0')!;
+  void green;
+  const px = (d: typeof doc, x: number, y: number) => { const r = renderSvg(toSVG(d, o), 256), i = (y * 256 + x) * 4; return [r.data[i], r.data[i + 1], r.data[i + 2]]; };
+  const order = (d: typeof doc) => listShapes(d).map((s) => s.id);
+
+  it('ordem natural: a primeira forma é a de baixo; effectiveOrder sem edições = ordem do vetor', () => {
+    expect(effectiveOrder(doc, {})).toEqual(sh.map((s) => s.id));
+    // em "empilhado" a camada de baixo (azul, maior) se estende sob as outras: o vermelho aparece por cima dela
+    expect(px(doc, 50, 50)).toEqual([208, 52, 44]);
+  });
+
+  it('trazer para a frente / enviar para trás mudam o que se vê onde as formas se sobrepõem', () => {
+    const d1 = applyShapeEdits(doc, reorderShapes(doc, doc, {}, [blue.id], 'front'));
+    expect(order(d1)[order(d1).length - 1]).toBe(blue.id);
+    expect(px(d1, 50, 50)).toEqual([44, 95, 208]); // o azul (que se estende sob tudo) agora cobre o vermelho
+    const d2 = applyShapeEdits(doc, reorderShapes(doc, d1, reorderShapes(doc, doc, {}, [blue.id], 'front'), [blue.id], 'back'));
+    expect(order(d2)[0]).toBe(blue.id);
+    expect(px(d2, 50, 50)).toEqual([208, 52, 44]); // voltou ao natural
+    expect(d1.ordered).toBe(true);
+  });
+
+  it('avançar/recuar andam UM passo e voltam; no topo/fundo não fazem nada', () => {
+    const ids = effectiveOrder(doc, {});
+    const n = ids.length;
+    const fw = reorderShapes(doc, doc, {}, [ids[0]], 'forward');
+    expect(effectiveOrder(doc, fw)[1]).toBe(ids[0]);
+    const bk = reorderShapes(doc, doc, fw, [ids[0]], 'backward');
+    expect(effectiveOrder(doc, bk)).toEqual(ids);
+    expect(Object.keys(bk).length).toBe(0); // voltou à ordem natural: nenhuma edição sobra
+    expect(reorderShapes(doc, doc, {}, [ids[n - 1]], 'forward')).toEqual({});
+    expect(reorderShapes(doc, doc, {}, [ids[0]], 'backward')).toEqual({});
+  });
+
+  it('arrastar: logo à frente / logo atrás de outra forma', () => {
+    const ids = effectiveOrder(doc, {});
+    const e = reorderShapes(doc, doc, {}, [ids[ids.length - 1]], { behind: ids[0] });
+    expect(effectiveOrder(doc, e)[0]).toBe(ids[ids.length - 1]);
+    const e2 = reorderShapes(doc, doc, {}, [ids[0]], { inFrontOf: ids[ids.length - 1] });
+    expect(effectiveOrder(doc, e2).slice(-1)[0]).toBe(ids[0]);
+  });
+
+  it('vários selecionados mantêm a ordem relativa; um passo pula formas ocultas', () => {
+    const ids = effectiveOrder(doc, {});
+    const e = reorderShapes(doc, doc, {}, [ids[0], ids[2]], 'front');
+    expect(effectiveOrder(doc, e).slice(-2)).toEqual([ids[0], ids[2]]);
+    // esconde a do meio: avançar a de baixo passa direto por ela
+    const hid = editShapes(doc, {}, [ids[1]], { hidden: true });
+    const visible = applyShapeEdits(doc, hid);
+    const f = reorderShapes(doc, visible, hid, [ids[0]], 'forward');
+    const eo = effectiveOrder(doc, f);
+    expect(eo.indexOf(ids[0])).toBeGreaterThan(eo.indexOf(ids[2]) - 1);
+  });
+
+  it('a ordem aparece no SVG (ids em ordem de desenho), com paleta e cores combinadas', () => {
+    const e = reorderShapes(doc, doc, {}, [red.id], 'front');
+    const mid = applyShapeEdits(doc, e);
+    const svgOut = toSVG(applyPaletteEdits(mid, { '#2c5fd0': { color: '#ff00ff' } }), o);
+    const ids = [...svgOut.matchAll(/id="forma-(\d+)"/g)].map((m) => Number(m[1]));
+    expect(ids[ids.length - 1]).toBe(red.id);
+    expect(svgOut).toContain('#ff00ff');
+  });
+
+  it('em recortes, juntar cores iguais não desfaz a ordem do usuário', () => {
+    const c = vectorize(ras(wrap('<rect x="10" y="10" width="60" height="60" fill="#d0342c"/><rect x="100" y="10" width="60" height="60" fill="#2c5fd0"/><rect x="10" y="120" width="60" height="60" fill="#d0342c"/>')), opts({ maxColors: 6, mergeDeltaE: 3 }));
+    const s2 = listShapes(c).filter((s) => s.color.startsWith('#d0'));
+    const blue2 = listShapes(c).find((s) => s.color.startsWith('#2c'))!;
+    const e = reorderShapes(c, c, {}, [s2[1].id], 'front'); // a segunda vermelha por cima da azul
+    const d = applyPaletteEdits(applyShapeEdits(c, e), {});
+    const ord = listShapes(d).map((s) => s.id);
+    expect(ord.indexOf(s2[1].id)).toBeGreaterThan(ord.indexOf(blue2.id));
+  });
+
+  it('reprocessar: a ordem de camadas é descartada com sinal (as demais edições ficam)', () => {
+    const e = { ...reorderShapes(doc, doc, {}, [red.id], 'front'), ...editShapes(doc, {}, [blue.id], { color: '#00ff00' }) };
+    const doc2 = vectorize(ras(svg), o);
+    const r = remapShapeEdits(doc2, e);
+    expect(r.orderLost).toBe(true);
+    expect(Object.values(r.edits).some((x) => x.z !== undefined)).toBe(false);
+    expect(Object.values(r.edits).some((x) => x.color === '#00ff00')).toBe(true);
   });
 });

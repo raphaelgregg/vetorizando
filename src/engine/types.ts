@@ -47,6 +47,8 @@ export interface VDoc {
   openBoundary: boolean;
   /** empilhamento com que o documento foi gerado (a edição de paleta depende dele) */
   stacking: Stacking;
+  /** a ordem de desenho foi definida pelo usuário (camadas): mesclar cores não pode reordenar as formas */
+  ordered?: boolean;
   stats: {
     nodes: number; // nós finais (segmentos)
     paths: number;

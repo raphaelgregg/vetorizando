@@ -1,5 +1,5 @@
 import { pathData } from '../engine/svg';
-import { ShapeEdits, copyPaint, editShapes, listShapes, mergeShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
+import { ReorderOp, ShapeEdits, copyPaint, editShapes, effectiveOrder, listShapes, mergeShapes, reorderShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
 import { addStop, convertKind, defaultGradient, removeStop, reverse, setStop } from '../engine/gradedit';
 import type { Gradient, VDoc } from '../engine/types';
 
@@ -27,6 +27,7 @@ const css = (c: string, g?: Gradient): string => (g ? `linear-gradient(90deg,${g
 export function initShapes(host: ShapesHost) {
   const rows = $('shaperows');
   let copying = false;
+  let dragIds: number[] = [];
   const setCopying = (on: boolean) => { copying = on; $('shcopy').setAttribute('aria-pressed', String(on)); host.picking(on); if (on) host.hint('Clique na forma cuja cor deseja copiar (na prévia ou na lista). Esc cancela.'); };
   /** aplica a tinta da forma `sourceId` às selecionadas e sai do modo */
   const applyCopy = (sourceId: number) => {
@@ -52,22 +53,33 @@ export function initShapes(host: ShapesHost) {
     renderGradient();
     const doc = host.doc(), base = host.base();
     rows.replaceChildren();
-    $('shhidden').replaceChildren();
     if (!doc || !base) { $('shapecount').textContent = ''; return; }
     const shapes = listShapes(doc);
     for (const id of [...sel()]) if (!shapes.some((s) => s.id === id)) sel().delete(id);
     const hiddenIds = Object.entries(host.edits()).filter(([, e]) => e.hidden).map(([k]) => Number(k));
-    $('shapecount').textContent = `(${shapes.length}${hiddenIds.length ? ` · ${hiddenIds.length} excluída${hiddenIds.length > 1 ? 's' : ''}` : ''})`;
+    $('shapecount').textContent = `(${shapes.length}${hiddenIds.length ? ` · ${hiddenIds.length} oculta${hiddenIds.length > 1 ? 's' : ''}` : ''})`;
     const n = sel().size;
-    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone', 'shcopy']) $<HTMLButtonElement>(id).disabled = id === 'shmerge' ? n < 2 : n === 0;
+    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone', 'shcopy', 'zfront', 'zfwd', 'zbwd', 'zback']) $<HTMLButtonElement>(id).disabled = id === 'shmerge' ? n < 2 : n === 0;
     if (n === 0 && copying) setCopying(false);
     $<HTMLInputElement>('shcolor').disabled = n === 0;
     if (n === 1) { const s = shapes.find((x) => sel().has(x.id)); if (s && !s.gradient) $<HTMLInputElement>('shcolor').value = s.color; }
     host.hint(n ? `${n} ${n === 1 ? 'forma selecionada' : 'formas selecionadas'}` : 'Clique numa forma para selecioná-la; arraste para selecionar várias (Shift soma · Alt escolhe a de trás).');
-    const list = [...shapes].sort((a, b) => b.area - a.area).slice(0, 60);
-    for (const s of list) {
+    // camadas: da frente para o fundo (como num painel de camadas); formas ocultas aparecem esmaecidas
+    const edits = host.edits();
+    const liveMap = new Map(shapes.map((x) => [x.id, x]));
+    const baseMap = new Map(listShapes(base).map((x) => [x.id, x]));
+    const order = effectiveOrder(base, edits).filter((id) => edits[id]?.absorbed === undefined).reverse();
+    const MAX = 300;
+    for (const id of order.slice(0, MAX)) {
+      const s = liveMap.get(id) ?? baseMap.get(id);
+      if (!s) continue;
+      const hid = !liveMap.has(id);
       const r = document.createElement('div');
-      r.className = 'shaperow' + (sel().has(s.id) ? ' on' : '');
+      r.className = 'shaperow' + (sel().has(id) ? ' on' : '') + (hid ? ' hid' : '');
+      r.dataset.id = String(id);
+      const eye = Object.assign(document.createElement('button'), { className: 'eye', textContent: '👁', title: hid ? 'Oculta — clique para mostrar' : 'Visível — clique para ocultar' });
+      eye.setAttribute('aria-pressed', String(hid));
+      eye.addEventListener('click', (e) => { e.stopPropagation(); host.commit(editShapes(base, host.edits(), [id], hid ? null : { hidden: true })); });
       const sw = document.createElement('i');
       sw.style.background = css(s.color, s.gradient);
       const t = document.createElement('div');
@@ -77,28 +89,31 @@ export function initShapes(host: ShapesHost) {
       const a = document.createElement('span');
       a.textContent = s.area >= 1000 ? `${(s.area / 1000).toFixed(1)}k px²` : `${Math.round(s.area)} px²`;
       t.append(m);
-      r.append(sw, t, a);
-      r.addEventListener('click', (e) => { if (copying) applyCopy(s.id); else toggle(s.id, e.shiftKey || e.ctrlKey || e.metaKey); });
+      r.append(eye, sw, t, a);
+      r.addEventListener('click', (e) => { if (hid) return; if (copying) applyCopy(id); else toggle(id, e.shiftKey || e.ctrlKey || e.metaKey); });
+      if (!hid) {
+        r.draggable = true;
+        r.addEventListener('dragstart', (e) => { dragIds = sel().has(id) ? ids() : [id]; e.dataTransfer?.setData('text/plain', String(id)); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; });
+        r.addEventListener('dragend', () => rows.querySelectorAll('.drop-top,.drop-bottom').forEach((x) => x.classList.remove('drop-top', 'drop-bottom')));
+      }
+      r.addEventListener('dragover', (e) => {
+        if (!dragIds.length || dragIds.includes(id)) return;
+        e.preventDefault();
+        const rc = r.getBoundingClientRect(), top = e.clientY < rc.top + rc.height / 2;
+        r.classList.toggle('drop-top', top); r.classList.toggle('drop-bottom', !top);
+      });
+      r.addEventListener('dragleave', () => r.classList.remove('drop-top', 'drop-bottom'));
+      r.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const rc = r.getBoundingClientRect(), top = e.clientY < rc.top + rc.height / 2; // metade de cima da linha = na frente dela
+        const mv = dragIds; dragIds = [];
+        if (mv.length && !mv.includes(id)) host.commit(reorderShapes(base, doc, host.edits(), mv, top ? { inFrontOf: id } : { behind: id }));
+      });
       rows.append(r);
     }
-    if (shapes.length > list.length) rows.append(Object.assign(document.createElement('span'), { textContent: `… e mais ${shapes.length - list.length} formas menores (selecione na prévia)`, className: 'shapehint' }));
-    if (hiddenIds.length) {
-      const box = $('shhidden');
-      box.append(`Excluídas: `);
-      for (const id of hiddenIds.slice(0, 8)) {
-        const s = base ? listShapes(base).find((x) => x.id === id) : undefined;
-        const b = document.createElement('button');
-        b.textContent = `restaurar ${s ? Math.round(s.area) + ' px²' : '#' + id}`;
-        b.addEventListener('click', () => host.commit(editShapes(base, host.edits(), [id], null)));
-        box.append(b);
-      }
-      const all = document.createElement('button');
-      all.textContent = 'restaurar todas';
-      all.addEventListener('click', () => host.commit(editShapes(base, host.edits(), hiddenIds, null)));
-      box.append(all);
-    }
+    if (order.length > MAX) rows.append(Object.assign(document.createElement('span'), { textContent: `… e mais ${order.length - MAX} camadas mais ao fundo (selecione na prévia)`, className: 'shapehint' }));
+    rows.querySelector('.shaperow.on')?.scrollIntoView({ block: 'nearest' });
   }
-
 
   /** editor do gradiente da forma selecionada: tipo, paradas (cor + posição), inverter; as alças ficam na prévia */
   function renderGradient() {
@@ -196,6 +211,11 @@ export function initShapes(host: ShapesHost) {
     const after = host.doc() ? listShapes(host.doc()!).find((x) => x.id === main.id)?.nodes : undefined;
     host.hint(`${shapes.length} formas unidas em um único objeto${after !== undefined ? ` (${before} → ${after} pontos: os pontos que dividiam as formas foram removidos)` : ''}. A maior define a cor.`);
   });
+  const reorder = (op: ReorderOp) => { const b = base(), doc = host.doc(); if (b && doc && sel().size) host.commit(reorderShapes(b, doc, host.edits(), ids(), op)); };
+  $('zfront').addEventListener('click', () => reorder('front'));
+  $('zfwd').addEventListener('click', () => reorder('forward'));
+  $('zbwd').addEventListener('click', () => reorder('backward'));
+  $('zback').addEventListener('click', () => reorder('back'));
   $('shcopy').addEventListener('click', () => setCopying(!copying));
   $('shsim').addEventListener('click', () => {
     const doc = host.doc();
@@ -206,5 +226,5 @@ export function initShapes(host: ShapesHost) {
   });
   $('shnone').addEventListener('click', () => host.setSelection(new Set()));
 
-  return { render, overlay, pick, rect, del, cancelCopy: () => { if (copying) setCopying(false); }, get copying() { return copying; } };
+  return { render, overlay, pick, rect, del, reorder, cancelCopy: () => { if (copying) setCopying(false); }, get copying() { return copying; } };
 }

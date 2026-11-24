@@ -58,7 +58,7 @@
       </div>
       <aside id="palette" class="palette" aria-label="Paleta de cores do vetor">
         <div id="shapebox" class="shapebox">
-          <h2>Formas <span id="shapecount" class="count"></span></h2>
+          <h2>Camadas <span id="shapecount" class="count"></span></h2>
           <p id="shapehint" class="shapehint">Ative “Editar formas” e clique na prévia para selecionar.</p>
           <div class="tools">
             <button id="shdel" class="ghost" disabled title="Delete">Excluir</button>
@@ -75,7 +75,14 @@
             <span class="shapehint">Arraste pontos (círculos) e alças (laranja) · duplo clique na linha adiciona um ponto · Delete exclui o ponto</span>
           </div>
           <div id="gradbox" class="gradbox" hidden></div>
-          <div id="shaperows" class="shaperows"></div>
+          <div id="zbar" class="tools zbar" role="group" aria-label="Ordem das camadas">
+            <span class="shapehint">Camadas</span>
+            <button id="zfront" class="ghost" disabled title="Trazer para a frente (Ctrl+Shift+])">⤒</button>
+            <button id="zfwd" class="ghost" disabled title="Avançar um nível (Ctrl+])">↑</button>
+            <button id="zbwd" class="ghost" disabled title="Recuar um nível (Ctrl+[)">↓</button>
+            <button id="zback" class="ghost" disabled title="Enviar para trás (Ctrl+Shift+[)">⤓</button>
+          </div>
+          <div id="shaperows" class="shaperows" aria-label="Camadas: da frente para o fundo"></div>
           <div id="shhidden" class="hiddenlist"></div>
         </div>
         <h2>Cores <span id="palcount" class="count"></span></h2>
