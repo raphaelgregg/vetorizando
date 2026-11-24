@@ -89,6 +89,14 @@ describe('formas: edições', () => {
     const d = applyShapeEdits(doc, editShapes(doc, {}, [red.id], { mergeInto: blue.id }));
     expect(d.layers.some((l) => l.color === red.color)).toBe(false);
     expect(d.layers.filter((l) => l.color === blue.color).flatMap((l) => l.paths).length).toBeGreaterThanOrEqual(3);
+    // fundir = UMA forma (um id, um clique seleciona tudo), não só a mesma cor
+    const ds = listShapes(d);
+    expect(ds.length).toBe(sh.length - 1);
+    const m = ds.find((s) => s.id === blue.id)!;
+    expect(m.paths.length).toBe(blue.paths.length + red.paths.length);
+    expect(shapesAt(d, 70, 128)).toContain(blue.id);
+    expect(shapesAt(d, 70, 128)).not.toContain(red.id);
+    expect(d.stats.shapes).toBe(doc.stats.shapes - 1);
   });
 
   it('empilhado: excluir revela o que está atrás (sem borda aberta)', () => {
@@ -162,5 +170,18 @@ describe('cor e gradiente por forma', () => {
       const a = vectorize(img, o), b = vectorize(img, { ...o, shapeColors: false });
       expect(toSVG(a, o), id).toBe(toSVG(b, o));
     }
+  });
+});
+
+describe('fragmentos de baixo contraste (contas, pontas) não viram formas', () => {
+  it('pontinhos de tom parecido dentro de uma faixa são absorvidos; detalhe contrastante fica', () => {
+    const dots = Array.from({ length: 24 }, (_, i) => `<rect x="${30 + i * 8}" y="${112 + (i % 3) * 8}" width="3" height="4" fill="#d9bf8f"/>`).join('');
+    const band = `<rect x="20" y="100" width="216" height="56" fill="#c9a876"/>${dots}`;
+    const hard = `<rect x="40" y="110" width="3" height="4" fill="#101010"/>`;
+    const o = opts({ maxColors: 8, mergeDeltaE: 3, speckle: 10 });
+    const soft = vectorize(ras(wrap(band)), o);
+    expect(soft.stats.shapes).toBeLessThanOrEqual(2); // fundo + faixa
+    const withHard = vectorize(ras(wrap(band + hard)), o);
+    expect(withHard.stats.shapes).toBeGreaterThan(soft.stats.shapes); // o ponto escuro é detalhe real
   });
 });

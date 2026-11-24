@@ -116,7 +116,8 @@ export function initShapes(host: ShapesHost) {
     const shapes = listShapes(doc).filter((s) => sel().has(s.id));
     const main = shapes.reduce((a, c) => (c.area > a.area ? c : a));
     host.commit(editShapes(b, host.edits(), ids().filter((i) => i !== main.id), { mergeInto: main.id }));
-    host.hint(`${shapes.length - 1} formas adotaram a tinta da maior.`);
+    host.setSelection(new Set([main.id]));
+    host.hint(`${shapes.length} formas fundidas em uma (a maior define a cor).`);
   });
   $('shsim').addEventListener('click', () => {
     const doc = host.doc();

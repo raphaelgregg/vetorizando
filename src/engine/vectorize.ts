@@ -6,7 +6,7 @@ import { fitLoop } from './fit';
 import { analyzeGradients } from './gradient';
 import { paintShapes } from './shapepaint';
 import { quantize } from './quantize';
-import { removeSpeckles } from './segment';
+import { regularizeLabels, removeSpeckles } from './segment';
 import type { Gradient, Layer, Options, Pt, ProgressFn, RawImage, VDoc, VPath } from './types';
 
 /**
@@ -96,7 +96,9 @@ export function vectorize(img: RawImage, o: Options, progress: ProgressFn = () =
     });
   }
   progress(0.2, 'Limpando ruído');
-  removeSpeckles(labels, w, h, o.speckle, palette.map((c) => rgbToLab(...c)));
+  const palLab = palette.map((c) => rgbToLab(...c));
+  regularizeLabels(labels, w, h, palLab);
+  removeSpeckles(labels, w, h, o.speckle, palLab);
 
   // áreas e fundo (cor dominante nas bordas)
   let area = new Float64Array(palette.length);

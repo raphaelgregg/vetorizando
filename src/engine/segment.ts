@@ -21,7 +21,7 @@ export function removeSpeckles(labels: Int16Array, w: number, h: number, minArea
   const limit = (a: number, b: number): number => {
     if (!palette) return minArea;
     const de = Math.sqrt(dist2(palette[a], palette[b]));
-    return minArea * (de >= 35 ? 0.25 : de >= 20 ? 0.6 : 1);
+    return minArea * (de >= 35 ? 0.25 : de >= 20 ? 0.6 : de >= 10 ? 1 : 3); // pouco contraste: fragmentos maiores ainda são ruído de quantização
   };
   const n = w * h;
   const seen = new Uint8Array(n);
@@ -47,7 +47,7 @@ export function removeSpeckles(labels: Int16Array, w: number, h: number, minArea
         }
       }
     }
-    if (comp.length >= minArea) continue; // grande o bastante (o limite por contraste só diminui)
+    if (comp.length >= (palette ? minArea * 3 : minArea)) continue; // grande o bastante (acima do maior limite possível)
     const votes = new Map<number, number>();
     for (const i of comp) {
       const x = i % w, y = (i / w) | 0;
@@ -63,5 +63,33 @@ export function removeSpeckles(labels: Int16Array, w: number, h: number, minArea
     }
     if (best >= 0 && comp.length >= limit(lab, best)) continue; // detalhe contrastante (linha fina, ponto): mantém
     if (best >= 0) for (const i of comp) labels[i] = best;
+  }
+}
+
+/**
+ * Regulariza o mapa de rótulos: um pixel que quase não tem vizinhos do próprio rótulo (≤ 2 de 8) e está cercado por
+ * outro rótulo de cor parecida (ΔE ≤ `maxDe`) é reatribuído a ele. Remove pontas, pontes e "contas" de 1–2 px que a
+ * quantização deixa em transições suaves (brilho de relevo, degradês), sem tocar linhas finas de alto contraste.
+ */
+export function regularizeLabels(labels: Int16Array, w: number, h: number, palette: Lab[], maxDe = 20, passes = 2): void {
+  for (let pass = 0; pass < passes; pass++) {
+    const src = labels.slice();
+    let changed = 0;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, l = src[i];
+      if (l < 0) continue;
+      let own = 0, best = -1, bc = 0;
+      const cnt: Record<number, number> = {};
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const q = src[i + dy * w + dx];
+        if (q === l) own++;
+        else if (q >= 0) { const c = (cnt[q] = (cnt[q] ?? 0) + 1); if (c > bc) { bc = c; best = q; } }
+      }
+      if (own > 2 || bc < 5) continue;
+      if (Math.sqrt(dist2(palette[l], palette[best])) > maxDe) continue;
+      labels[i] = best; changed++;
+    }
+    if (!changed) break;
   }
 }

@@ -23,7 +23,7 @@
       "deltaE": 0.36,
       "deltaEEdge": 2.42,
       "deltaEFlat": 0.33,
-      "nodes": 38,
+      "nodes": 35,
       "hd95": 1.5
     },
     "photo": {
@@ -31,7 +31,7 @@
       "deltaE": 5.49,
       "deltaEEdge": 10.95,
       "deltaEFlat": 4.91,
-      "nodes": 3807
+      "nodes": 3640
     },
     "lineart": {
       "ssim": 0.994,
@@ -78,7 +78,7 @@
       "deltaE": 0.45,
       "deltaEEdge": 2.53,
       "deltaEFlat": 0.33,
-      "nodes": 459,
+      "nodes": 172,
       "hd95": 1.5
     }
   }

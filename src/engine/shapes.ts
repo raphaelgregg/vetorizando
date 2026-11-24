@@ -20,7 +20,7 @@ export interface Shape {
 export interface ShapeEdit {
   hidden?: boolean; // excluída (some; em "Recortes" fica transparente, em "Empilhado" aparece o que está atrás)
   color?: string; // nova cor sólida (#rrggbb): substitui cor/gradiente
-  mergeInto?: number; // adota a tinta (cor ou gradiente) de outra forma
+  mergeInto?: number; // funde numa só forma com a outra (id da de destino): um objeto, uma tinta
   /** âncora para reaplicar a edição depois de reprocessar: um ponto dentro da forma e sua área */
   at?: [number, number];
   area?: number;
@@ -64,28 +64,35 @@ function measure(paths: VPath[]): { area: number; nodes: number; bbox: Shape['bb
 
 /** Formas do documento, na ordem de desenho. Caminhos sem `sid` (vetor antigo) viram formas individuais de id negativo. */
 export function listShapes(doc: VDoc): Shape[] {
-  const out: Shape[] = [];
+  const order: number[] = [];
+  const acc = new Map<number, { layer: number; paths: VPath[] }>();
   let neg = -1;
   doc.layers.forEach((layer, li) => {
-    const by = new Map<number, VPath[]>();
     for (const p of layer.paths) {
       const id = p.sid ?? neg--;
-      by.set(id, [...(by.get(id) ?? []), p]);
+      let e = acc.get(id);
+      if (!e) { acc.set(id, (e = { layer: li, paths: [] })); order.push(id); }
+      e.paths.push(p); // formas fundidas podem ter caminhos em mais de uma camada
     }
-    for (const [id, paths] of by) out.push({ id, layer: li, color: layer.color, gradient: layer.gradient, paths, ...measure(paths) });
   });
-  return out;
+  return order.map((id) => {
+    const e = acc.get(id)!, layer = doc.layers[e.layer];
+    return { id, layer: e.layer, color: layer.color, gradient: layer.gradient, paths: e.paths, ...measure(e.paths) };
+  });
 }
 
 /** ids das formas que contêm o ponto, da mais à frente para a mais ao fundo */
 export function shapesAt(doc: VDoc, x: number, y: number): number[] {
-  const hit: number[] = [];
-  for (let li = doc.layers.length - 1; li >= 0; li--) {
-    const by = new Map<number, VPath[]>();
-    for (const p of doc.layers[li].paths) { const id = p.sid ?? -1 - li * 100000 - by.size; by.set(id, [...(by.get(id) ?? []), p]); }
-    for (const [id, paths] of by) if (winding(paths, x, y) !== 0) hit.push(id);
-  }
-  return hit;
+  const all = new Map<number, VPath[]>(), lastLayer = new Map<number, number>();
+  doc.layers.forEach((layer, li) => {
+    for (const p of layer.paths) {
+      const id = p.sid ?? -1 - li * 100000 - all.size;
+      all.set(id, [...(all.get(id) ?? []), p]);
+      lastLayer.set(id, li);
+    }
+  });
+  // da mais à frente (última camada) para a mais ao fundo
+  return [...all].filter(([, paths]) => winding(paths, x, y) !== 0).map(([id]) => id).sort((a, b) => (lastLayer.get(b) ?? 0) - (lastLayer.get(a) ?? 0));
 }
 
 /** formas cuja caixa fica toda dentro (ou, com `touch`, cruza) do retângulo */
@@ -139,7 +146,7 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
     if (patch === null) { delete out[id]; continue; }
     const cur = { ...out[id], ...patch };
     if (patch.color !== undefined) delete cur.mergeInto;
-    if (patch.mergeInto !== undefined) delete cur.color;
+    if (patch.mergeInto !== undefined) { delete cur.color; delete cur.hidden; }
     if (!cur.hidden) delete cur.hidden;
     if (!cur.hidden && cur.color === undefined && cur.mergeInto === undefined) { delete out[id]; continue; }
     out[id] = { ...cur, at: interiorPoint(s.paths), area: s.area };
@@ -155,35 +162,36 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
 export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
   if (!hasShapeEdits(edits)) return doc;
   const byId = new Map(listShapes(doc).map((s) => [s.id, s]));
-  const paintOf = (id: number): { color: string; gradient?: Gradient } | null => {
-    const e = edits[id];
-    if (e?.color) return { color: e.color };
-    if (e?.mergeInto !== undefined) {
-      const t = byId.get(e.mergeInto), te = edits[e.mergeInto];
-      if (te?.color) return { color: te.color };
-      if (t) return { color: t.color, gradient: t.gradient };
+  /** forma efetiva: seguindo "fundir em" (as fundidas passam a ser UMA forma, com o id da de destino) */
+  const resolve = (id: number): number => {
+    let cur = id;
+    for (let k = 0; k < 16; k++) {
+      const m = edits[cur]?.mergeInto;
+      if (m === undefined || m === cur || !byId.has(m)) break;
+      cur = m;
     }
-    return null;
+    return cur;
   };
   let hidden = false;
   const layers: Layer[] = [];
-  doc.layers.forEach((layer, li) => {
+  doc.layers.forEach((layer) => {
     const keep: VPath[] = [];
     const groups = new Map<string, Layer>();
     let changed = false;
-    layer.paths.forEach((p) => {
-      const id = p.sid ?? -1 - keep.length - li; // vetor antigo sem sid: não editável
-      const e = p.sid === undefined ? undefined : edits[id];
-      if (!e) { keep.push(p); return; }
-      if (e.hidden) { changed = true; hidden = true; return; }
-      const paint = paintOf(id);
-      if (!paint) { keep.push(p); return; }
+    for (const p of layer.paths) {
+      if (p.sid === undefined) { keep.push(p); continue; }
+      const eff = resolve(p.sid), merged = eff !== p.sid, e = edits[eff];
+      if (!merged && !e) { keep.push(p); continue; }
+      if (e?.hidden) { changed = true; hidden = true; continue; }
+      const t = byId.get(eff);
+      const paint: { color: string; gradient?: Gradient } | null = e?.color ? { color: e.color } : merged && t ? { color: t.color, gradient: t.gradient } : null;
+      if (!paint) { keep.push(p); continue; }
       changed = true;
-      const key = paint.gradient ? `g${e.mergeInto}` : paint.color;
+      const key = paint.gradient ? `g${eff}` : paint.color;
       let g = groups.get(key);
       if (!g) groups.set(key, (g = paint.gradient ? { color: paint.color, paths: [], gradient: paint.gradient } : { color: paint.color, paths: [] }));
-      g.paths.push(p);
-    });
+      g.paths.push(merged ? { ...p, sid: eff } : p);
+    }
     if (!changed) { layers.push(layer); return; }
     if (keep.length) layers.push({ ...layer, paths: keep, fallback: undefined });
     layers.push(...groups.values());
