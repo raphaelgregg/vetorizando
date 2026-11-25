@@ -35,6 +35,9 @@ export class Viewer {
   private marquee = el('div', 'marquee');
   private ovEl = el('div', 'handles');
   private ovOn = false;
+  private clickStart: { x: number; y: number } | null = null;
+  /** clique simples (sem arrastar) fora do modo de edição de formas: varinha, conta-gotas, seleção de formas inseridas */
+  clickTool: ((x: number, y: number, shift: boolean, alt: boolean) => void) | null = null;
   private drag: { x0: number; y0: number; moved: boolean; kind: 'marquee' | 'move' | 'knife' } | null = null;
   private knifeEl = el('div', 'knifeline');
   /** ferramenta faca ligada: arrastar traça uma reta de corte */
@@ -206,6 +209,7 @@ export class Viewer {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this.draggingKnob = e.target === this.knob;
     this.drag = null;
+    this.clickStart = this.clickTool && !this.edit && !this.draggingKnob && e.button === 0 && this.pointers.size === 1 ? { x: e.clientX, y: e.clientY } : null;
     if (this.edit && !this.draggingKnob && e.button === 0 && this.pointers.size === 1) {
       const [x0, y0] = this.toDoc(e.clientX, e.clientY);
       const kind = this.knife ? 'knife' : this.movable(x0, y0) ? 'move' : 'marquee';
@@ -257,6 +261,11 @@ export class Viewer {
   }
 
   private up(e: PointerEvent): void {
+    if (this.clickStart && this.clickTool && e.type === 'pointerup' && Math.hypot(e.clientX - this.clickStart.x, e.clientY - this.clickStart.y) < 5) {
+      const [x, y] = this.toDoc(e.clientX, e.clientY);
+      this.clickTool(x, y, e.shiftKey, e.altKey);
+    }
+    this.clickStart = null;
     if (this.drag && e.type === 'pointerup') {
       const [x, y] = this.toDoc(e.clientX, e.clientY);
       if (this.drag.kind === 'move' && this.drag.moved) {

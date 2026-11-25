@@ -1,5 +1,5 @@
 import { Transform, prepare } from './crop';
-import { EnhanceParams, OutputSpec, enhance, fitToSize } from './ops';
+import { EditOps, EnhanceParams, OutputSpec, enhance, enhanceBase, fitToSize } from './ops';
 import type { RawImage } from '../engine/types';
 
 export interface EnhanceRequest {
@@ -11,6 +11,10 @@ export interface EnhanceRequest {
   transform?: Transform;
   /** só aplica a transformação (sem recorte nem melhorias): imagem para ajustar o recorte */
   transformOnly?: boolean;
+  /** remoções da varinha, formas e camada da imagem */
+  edit?: EditOps;
+  /** só a parte pesada (sem formas nem forma do recorte): a prévia compõe o resto no navegador, rápido */
+  baseOnly?: boolean;
   /** também devolve a imagem SEM melhorias, no mesmo enquadramento (comparação antes/depois) */
   withBefore?: boolean;
 }
@@ -18,7 +22,7 @@ export interface EnhanceRequest {
 export interface EnhanceResponse { id: number; type: 'done' | 'error'; image?: RawImage; before?: RawImage; message?: string }
 
 self.onmessage = (ev: MessageEvent<EnhanceRequest>) => {
-  const { id, image, params, out, withBefore, transform, transformOnly } = ev.data;
+  const { id, image, params, out, withBefore, transform, transformOnly, edit, baseOnly } = ev.data;
   const post = (m: EnhanceResponse, t: Transferable[] = []) => (self as unknown as Worker).postMessage(m, t);
   try {
     if (transformOnly) {
@@ -26,7 +30,7 @@ self.onmessage = (ev: MessageEvent<EnhanceRequest>) => {
       post({ id, type: 'done', image: r === image ? { ...r, data: new Uint8ClampedArray(r.data) } : r }, r === image ? [] : [r.data.buffer]);
       return;
     }
-    const result = enhance(image, params, out, transform);
+    const result = baseOnly ? enhanceBase(image, params, out, transform, edit) : enhance(image, params, out, transform, edit);
     const prepared = transform ? prepare(image, transform) : image;
     const before = withBefore ? (out ? fitToSize(prepared, out.width, out.height, out.fit, out.fx, out.fy, out.background) : prepared) : undefined;
     const tr: Transferable[] = [result.data.buffer];

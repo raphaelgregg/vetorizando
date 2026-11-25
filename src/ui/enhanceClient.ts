@@ -1,5 +1,5 @@
 import type { EnhanceRequest, EnhanceResponse } from '../enhance/worker';
-import type { EnhanceParams, OutputSpec } from '../enhance/ops';
+import type { EditOps, EnhanceParams, OutputSpec } from '../enhance/ops';
 import type { Transform } from '../enhance/crop';
 import type { RawImage } from '../engine/types';
 
@@ -9,7 +9,7 @@ export class EnhanceClient {
   private seq = 0;
   private reject: ((e: Error) => void) | null = null;
 
-  run(image: RawImage, params: EnhanceParams, out?: OutputSpec, withBefore = false, transform?: Transform, transformOnly = false): Promise<{ image: RawImage; before?: RawImage }> {
+  run(image: RawImage, params: EnhanceParams, out?: OutputSpec, withBefore = false, transform?: Transform, transformOnly = false, edit?: EditOps, baseOnly = false): Promise<{ image: RawImage; before?: RawImage }> {
     this.reject?.(new Error('cancelled'));
     this.worker?.terminate();
     const w = (this.worker = new Worker(new URL('../enhance/worker.ts', import.meta.url), { type: 'module' }));
@@ -23,7 +23,7 @@ export class EnhanceClient {
         if (m.type === 'done') resolve({ image: m.image!, before: m.before }); else reject(new Error(m.message));
       };
       w.onerror = (e) => { this.reject = null; reject(new Error(e.message || 'Falha no processamento')); };
-      const req: EnhanceRequest = { id, image: { data: new Uint8ClampedArray(image.data), width: image.width, height: image.height }, params, out, withBefore, transform, transformOnly };
+      const req: EnhanceRequest = { id, image: { data: new Uint8ClampedArray(image.data), width: image.width, height: image.height }, params, out, withBefore, transform, transformOnly, edit, baseOnly };
       w.postMessage(req);
     });
   }

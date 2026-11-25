@@ -1,6 +1,9 @@
 import { denoise } from '../engine/denoise';
 import type { RawImage } from '../engine/types';
+import { ColorReplace, FILTERS, applyFilter, hueShift, replaceColors, tint } from './colors';
 import { CropShape, Transform, prepare } from './crop';
+import { Overlay, drawOverlays } from './overlay';
+import { Removal, applyRemovals } from './wand';
 
 /** Parâmetros da melhoria de imagem (sem vetorizar). Controles de -100 a 100 são neutros em 0. */
 export interface EnhanceParams {
@@ -12,11 +15,17 @@ export interface EnhanceParams {
   temperature: number; // + quente (laranja) · − frio (azul)
   denoise: number; // 0 = desligado · 1 = automático (só com ruído/JPEG detectado) · até 3 = mais forte
   sharpen: number; // 0–100 (máscara de nitidez)
+  hue: number; // −180…180° (gira o matiz)
+  filter: string; // filtro de cor pronto (ver FILTERS); 'none' = nenhum
+  filterAmount: number; // 0–100
+  tint: string | null; // cor para colorir (#rrggbb)
+  tintAmount: number; // 0–100
+  replaces: ColorReplace[]; // substituições de cor
 }
 
-export const NEUTRAL: EnhanceParams = { auto: false, whiteBalance: false, brightness: 0, contrast: 0, saturation: 0, temperature: 0, denoise: 0, sharpen: 0 };
+export const NEUTRAL: EnhanceParams = { auto: false, whiteBalance: false, brightness: 0, contrast: 0, saturation: 0, temperature: 0, denoise: 0, sharpen: 0, hue: 0, filter: 'none', filterAmount: 100, tint: null, tintAmount: 0, replaces: [] };
 /** "Melhorar automaticamente": níveis, leve saturação, remoção de ruído/artefatos só se detectados e nitidez moderada. */
-export const AUTO_PARAMS: EnhanceParams = { auto: true, whiteBalance: false, brightness: 0, contrast: 0, saturation: 8, temperature: 0, denoise: 1, sharpen: 35 };
+export const AUTO_PARAMS: EnhanceParams = { auto: true, whiteBalance: false, brightness: 0, contrast: 0, saturation: 8, temperature: 0, denoise: 1, sharpen: 35, hue: 0, filter: 'none', filterAmount: 100, tint: null, tintAmount: 0, replaces: [] };
 
 export interface OutputSpec {
   width: number;
@@ -245,20 +254,55 @@ export function applyCircle(img: RawImage): RawImage {
   return out;
 }
 
+/** Edições "de pixel e de camada" além dos ajustes: remoções da varinha, formas inseridas e a camada da imagem. */
+export interface EditOps {
+  removals: Removal[];
+  overlays: Overlay[];
+  baseOpacity: number; // opacidade da camada da imagem (0–1)
+  baseVisible: boolean;
+}
+export const NO_EDIT: EditOps = { removals: [], overlays: [], baseOpacity: 1, baseVisible: true };
+
 /**
- * Melhoria completa. Se a origem é bem maior que a saída (> 2×), primeiro reduz até 2× a saída (mais rápido, e o
- * ruído já sai atenuado); depois: ruído → níveis/balanço → cor → ajuste ao tamanho → nitidez (já na escala final) → círculo.
+ * Parte "pesada" da melhoria (a que não depende das formas): giro/recorte → remoções da varinha → substituir cores →
+ * ruído → níveis/balanço → cor → matiz/filtro/colorir → ajuste ao tamanho → nitidez. Se a origem é > 2× a saída, antes
+ * disso reduz uniformemente (os cliques da varinha são frações: valem em qualquer resolução).
  */
-export function enhance(src: RawImage, p: EnhanceParams, out?: OutputSpec, t?: Transform): RawImage {
-  let img = t ? prepare(src, t) : src; // giro/espelho/endireitar + recorte antes de tudo (reduz o trabalho seguinte)
-  if (out && Math.max(src.width, src.height) > 2 * Math.max(out.width, out.height)) img = fitToSize(img, out.width * 2, out.height * 2, out.fit, out.fx, out.fy, out.background);
+export function enhanceBase(src: RawImage, p: EnhanceParams, out?: OutputSpec, t?: Transform, edit?: EditOps): RawImage {
+  let img = t ? prepare(src, t) : src;
+  if (out && Math.max(img.width, img.height) > 2 * Math.max(out.width, out.height)) {
+    const k = (2 * Math.max(out.width, out.height)) / Math.max(img.width, img.height);
+    img = resize(img, img.width * k, img.height * k);
+  }
+  if (edit?.removals.length) img = applyRemovals(img, edit.removals);
+  img = replaceColors(img, p.replaces ?? []);
   if (p.denoise > 0) img = denoise(img, p.denoise).image;
   if (p.auto) img = autoLevels(img);
   if (p.whiteBalance) img = grayWorld(img);
   img = adjust(img, p);
+  img = hueShift(img, p.hue ?? 0);
+  if (p.filter && p.filter !== 'none' && FILTERS.some((f) => f.id === p.filter)) img = applyFilter(img, p.filter, p.filterAmount ?? 100);
+  img = tint(img, p.tint ?? null, p.tintAmount ?? 0);
   if (out) img = fitToSize(img, out.width, out.height, out.fit, out.fx, out.fy, out.background);
   if (p.sharpen > 0) img = unsharp(img, (p.sharpen / 100) * 1.4, Math.min(2.5, Math.max(0.5, (Math.max(img.width, img.height) / 1080) * 0.9)));
-  const shape = out?.shape ?? (out?.circle ? 'ellipse' : 'rect');
-  if (shape !== 'rect') img = applyShape(img, shape, out?.radius);
   return img;
+}
+
+/** Parte "leve": camada da imagem (visibilidade/opacidade), formas inseridas e forma do recorte (que vale para tudo). */
+export function finalize(img: RawImage, edit?: EditOps, out?: OutputSpec): RawImage {
+  let r = img;
+  if (edit && (!edit.baseVisible || edit.baseOpacity < 1)) {
+    const d = new Uint8ClampedArray(r.data), k = edit.baseVisible ? edit.baseOpacity : 0;
+    for (let i = 3; i < d.length; i += 4) d[i] = Math.round(d[i] * k);
+    r = { data: d, width: r.width, height: r.height };
+  }
+  if (edit?.overlays.length) r = drawOverlays(r, edit.overlays);
+  const shape = out?.shape ?? (out?.circle ? 'ellipse' : 'rect');
+  if (shape !== 'rect') r = applyShape(r, shape, out?.radius);
+  return r;
+}
+
+/** Melhoria completa (base + formas + forma do recorte). */
+export function enhance(src: RawImage, p: EnhanceParams, out?: OutputSpec, t?: Transform, edit?: EditOps): RawImage {
+  return finalize(enhanceBase(src, p, out, t, edit), edit, out);
 }
