@@ -34,7 +34,14 @@ export class Viewer {
   private selEl = el('div', 'selection');
   private marquee = el('div', 'marquee');
   private ovEl = el('div', 'handles');
-  private drag: { x0: number; y0: number; moved: boolean } | null = null;
+  private drag: { x0: number; y0: number; moved: boolean; kind: 'marquee' | 'move' | 'knife' } | null = null;
+  private knifeEl = el('div', 'knifeline');
+  /** ferramenta faca ligada: arrastar traça uma reta de corte */
+  knife = false;
+  /** o ponto (espaço do documento) está sobre uma forma selecionada? então arrastar MOVE a seleção */
+  movable: (x: number, y: number) => boolean = () => false;
+  onMove: (dx: number, dy: number, final: boolean) => void = () => {};
+  onKnife: (p0: [number, number], p1: [number, number]) => void = () => {};
   onPick: (x: number, y: number, shift: boolean, alt: boolean) => void = () => {};
   onRect: (r: [number, number, number, number], shift: boolean, alt: boolean) => void = () => {};
 
@@ -42,7 +49,8 @@ export class Viewer {
     root.replaceChildren();
     this.stageA.append(new Image());
     this.stageB.append(this.vecEl, this.wireEl, this.selEl, this.ovEl);
-    this.root.append(this.marquee);
+    this.root.append(this.marquee, this.knifeEl);
+    this.knifeEl.hidden = true;
     this.marquee.hidden = true;
     this.root.addEventListener('contextmenu', (e) => { if (this.edit) e.preventDefault(); });
     this.a.append(this.stageA);
@@ -83,7 +91,10 @@ export class Viewer {
     this.render();
   }
 
-  setEditMode(on: boolean): void { this.edit = on; this.root.classList.toggle('editing', on); if (!on) { this.drag = null; this.marquee.hidden = true; } }
+  setEditMode(on: boolean): void { this.edit = on; this.root.classList.toggle('editing', on); if (!on) { this.drag = null; this.marquee.hidden = true; this.knifeEl.hidden = true; } }
+
+  /** cursor/estado da ferramenta faca */
+  setKnife(on: boolean): void { this.knife = on; this.root.classList.toggle('knife', on); }
 
   /** `d`: dados de caminho (SVG) das formas selecionadas, em coordenadas do documento */
   setSelection(d: string): void {
@@ -193,7 +204,8 @@ export class Viewer {
     this.drag = null;
     if (this.edit && !this.draggingKnob && e.button === 0 && this.pointers.size === 1) {
       const [x0, y0] = this.toDoc(e.clientX, e.clientY);
-      this.drag = { x0, y0, moved: false };
+      const kind = this.knife ? 'knife' : this.movable(x0, y0) ? 'move' : 'marquee';
+      this.drag = { x0, y0, moved: false, kind };
     }
     if (this.pointers.size === 2) { this.pinch = this.pinchDist(); this.drag = null; this.marquee.hidden = true; }
   }
@@ -208,7 +220,20 @@ export class Viewer {
       const r = this.root.getBoundingClientRect();
       if (this.drag.moved || Math.hypot((x - this.drag.x0) * this.scale, (y - this.drag.y0) * this.scale) > 4) {
         this.drag.moved = true;
+        if (this.drag.kind === 'move') {
+          let dx = x - this.drag.x0, dy = y - this.drag.y0;
+          if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; } // Shift trava o eixo
+          this.onMove(dx, dy, false);
+          return;
+        }
         const ax = this.drag.x0 * this.scale + this.tx, ay = this.drag.y0 * this.scale + this.ty, bx = cur.x - r.left, by = cur.y - r.top;
+        if (this.drag.kind === 'knife') {
+          // reta de corte (estendida na prévia por uma linha tracejada)
+          const len = Math.hypot(bx - ax, by - ay), ang = Math.atan2(by - ay, bx - ax);
+          Object.assign(this.knifeEl.style, { left: `${ax}px`, top: `${ay}px`, width: `${len}px`, transform: `rotate(${ang}rad)` });
+          this.knifeEl.hidden = false;
+          return;
+        }
         Object.assign(this.marquee.style, { left: `${Math.min(ax, bx)}px`, top: `${Math.min(ay, by)}px`, width: `${Math.abs(ax - bx)}px`, height: `${Math.abs(ay - by)}px` });
         this.marquee.hidden = false;
       }
@@ -230,11 +255,18 @@ export class Viewer {
   private up(e: PointerEvent): void {
     if (this.drag && e.type === 'pointerup') {
       const [x, y] = this.toDoc(e.clientX, e.clientY);
-      if (this.drag.moved) this.onRect([this.drag.x0, this.drag.y0, x, y], e.shiftKey, e.altKey);
+      if (this.drag.kind === 'move' && this.drag.moved) {
+        let dx = x - this.drag.x0, dy = y - this.drag.y0;
+        if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+        this.onMove(dx, dy, true);
+      } else if (this.drag.kind === 'knife') {
+        if (this.drag.moved) this.onKnife([this.drag.x0, this.drag.y0], [x, y]);
+      } else if (this.drag.moved) this.onRect([this.drag.x0, this.drag.y0, x, y], e.shiftKey, e.altKey);
       else this.onPick(x, y, e.shiftKey, e.altKey);
     }
     this.drag = null;
     this.marquee.hidden = true;
+    this.knifeEl.hidden = true;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size === 0) this.draggingKnob = false;
     this.pinch = 0;

@@ -63,11 +63,15 @@
       <aside id="palette" class="palette" aria-label="Paleta de cores do vetor">
         <div id="shapebox" class="shapebox">
           <h2>Camadas <span id="shapecount" class="count"></span></h2>
-          <p id="shapehint" class="shapehint">Ative “Editar formas” e clique na prévia para selecionar.</p>
+          <p id="shapehint" class="shapehint">Ative “Editar formas”: clique para selecionar, arraste a seleção para mover (Shift trava o eixo; setas movem 1 px, Shift+setas 10 px).</p>
           <div class="tools">
             <button id="shdel" class="ghost" disabled title="Delete">Excluir</button>
             <input id="shcolor" type="color" value="#888888" title="Recolorir as selecionadas" disabled />
             <button id="shcopy" class="ghost" disabled aria-pressed="false" title="Copia a cor (ou gradiente) de outra forma para as selecionadas: clique neste botão e depois na forma de origem (na prévia ou na lista)">Copiar cor de…</button>
+            <button id="shdup" class="ghost" disabled title="Duplica as formas selecionadas (Ctrl+D)">Duplicar</button>
+            <button id="knife" class="ghost" aria-pressed="false" title="Faca: arraste uma reta atravessando a forma para dividi-la em duas formas independentes (Esc sai)">✂ Faca</button>
+            <button id="shsub" class="ghost" disabled title="Subtrair: tira da forma de trás a parte coberta pelas formas da frente (selecione 2 ou mais)">Subtrair</button>
+            <button id="shint" class="ghost" disabled title="Interseção: mantém só a parte em comum (selecione 2 ou mais)">Interseção</button>
             <button id="shmerge" class="ghost" disabled title="Une as formas selecionadas num único contorno (a maior define a cor)">Fundir</button>
             <button id="shsim" class="ghost" disabled title="Seleciona as formas de cor semelhante">Semelhantes</button>
             <button id="shnone" class="ghost" disabled>Limpar seleção</button>

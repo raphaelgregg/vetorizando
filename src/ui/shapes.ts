@@ -1,5 +1,5 @@
 import { pathData } from '../engine/svg';
-import { ReorderOp, ShapeEdits, copyPaint, editShapes, effectiveOrder, listShapes, mergeShapes, reorderShapes, shapesAt, shapesInRect, similarShapes } from '../engine/shapes';
+import { ReorderOp, ShapeEdits, combineShapes, copyPaint, duplicateShapes, editShapes, effectiveOrder, injectAdded, listShapes, mergeShapes, reorderShapes, shapesAt, shapesInRect, similarShapes, splitShapes, translateShapes } from '../engine/shapes';
 import { addStop, convertKind, defaultGradient, removeStop, reverse, setStop } from '../engine/gradedit';
 import type { Gradient, VDoc } from '../engine/types';
 
@@ -17,6 +17,8 @@ export interface ShapesHost {
   hint(text: string): void;
   /** modo "copiar cor de…" ligado/desligado (muda o cursor da prévia) */
   picking(on: boolean): void;
+  /** ferramenta faca ligada/desligada */
+  knife(on: boolean): void;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -59,7 +61,7 @@ export function initShapes(host: ShapesHost) {
     const hiddenIds = Object.entries(host.edits()).filter(([, e]) => e.hidden).map(([k]) => Number(k));
     $('shapecount').textContent = `(${shapes.length}${hiddenIds.length ? ` · ${hiddenIds.length} oculta${hiddenIds.length > 1 ? 's' : ''}` : ''})`;
     const n = sel().size;
-    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone', 'shcopy', 'zfront', 'zfwd', 'zbwd', 'zback']) $<HTMLButtonElement>(id).disabled = id === 'shmerge' ? n < 2 : n === 0;
+    for (const id of ['shdel', 'shmerge', 'shsim', 'shnone', 'shcopy', 'zfront', 'zfwd', 'zbwd', 'zback', 'shdup', 'shsub', 'shint']) $<HTMLButtonElement>(id).disabled = ['shmerge', 'shsub', 'shint'].includes(id) ? n < 2 : n === 0;
     if (n === 0 && copying) setCopying(false);
     $<HTMLInputElement>('shcolor').disabled = n === 0;
     if (n === 1) { const s = shapes.find((x) => sel().has(x.id)); if (s && !s.gradient) $<HTMLInputElement>('shcolor').value = s.color; }
@@ -67,7 +69,7 @@ export function initShapes(host: ShapesHost) {
     // camadas: da frente para o fundo (como num painel de camadas); formas ocultas aparecem esmaecidas
     const edits = host.edits();
     const liveMap = new Map(shapes.map((x) => [x.id, x]));
-    const baseMap = new Map(listShapes(base).map((x) => [x.id, x]));
+    const baseMap = new Map(listShapes(injectAdded(base, edits)).map((x) => [x.id, x]));
     const order = effectiveOrder(base, edits).filter((id) => edits[id]?.absorbed === undefined).reverse();
     const MAX = 300;
     for (const id of order.slice(0, MAX)) {
@@ -217,6 +219,45 @@ export function initShapes(host: ShapesHost) {
   $('zbwd').addEventListener('click', () => reorder('backward'));
   $('zback').addEventListener('click', () => reorder('back'));
   $('shcopy').addEventListener('click', () => setCopying(!copying));
+
+  // ---- recortar / dividir / duplicar / mover
+  const combine = (op: 'subtract' | 'intersect') => {
+    const b = base(), doc = host.doc();
+    if (!b || !doc) return;
+    const r = combineShapes(b, doc, host.edits(), ids(), op);
+    if (!r) return;
+    host.commit(r.edits);
+    host.setSelection(r.empty ? new Set() : new Set([r.target]));
+    host.hint(r.empty ? 'O resultado ficou vazio: a forma foi removida.' : op === 'subtract' ? 'Recorte feito: a parte coberta foi removida da forma de trás (Ctrl+Z desfaz).' : 'Mantida só a parte em comum (Ctrl+Z desfaz).');
+  };
+  $('shsub').addEventListener('click', () => combine('subtract'));
+  $('shint').addEventListener('click', () => combine('intersect'));
+  const duplicate = () => {
+    const b = base(), doc = host.doc();
+    if (!b || !doc || !sel().size) return;
+    const r = duplicateShapes(b, doc, host.edits(), ids());
+    host.commit(r.edits);
+    host.setSelection(new Set(r.ids));
+    host.hint(`${r.ids.length} ${r.ids.length === 1 ? 'forma duplicada' : 'formas duplicadas'}: arraste para posicionar.`);
+  };
+  $('shdup').addEventListener('click', duplicate);
+  let knifeOn = false;
+  const setKnife = (on: boolean) => { knifeOn = on; $('knife').setAttribute('aria-pressed', String(on)); host.knife(on); if (on) host.hint('Faca: arraste uma reta atravessando a forma (a selecionada, ou a que estiver sob o início do corte). Esc sai.'); };
+  $('knife').addEventListener('click', () => setKnife(!knifeOn));
+  /** corta com a reta p0–p1; alvos = selecionadas ou a forma sob p0 */
+  const knife = (p0: [number, number], p1: [number, number]) => {
+    const b = base(), doc = host.doc();
+    if (!b || !doc) return;
+    let targets = ids();
+    if (!targets.length) { const hit = shapesAt(doc, p0[0], p0[1]); if (hit.length) targets = [hit[0]]; }
+    if (!targets.length) { host.hint('Selecione a forma a cortar (ou comece o corte sobre ela).'); return; }
+    const r = splitShapes(b, doc, host.edits(), targets, { x: p0[0], y: p0[1] }, { x: p1[0], y: p1[1] });
+    if (!r.ids.length) { host.hint('A reta não atravessou nenhuma forma: o corte precisa passar por dentro dela.'); return; }
+    host.commit(r.edits);
+    host.setSelection(new Set(r.ids));
+    host.hint(`${r.ids.length / 2} ${r.ids.length / 2 === 1 ? 'forma dividida' : 'formas divididas'} em duas: cada metade é independente (Ctrl+Z desfaz).`);
+  };
+  const nudge = (dx: number, dy: number) => { const b = base(); if (b && sel().size) host.commit(translateShapes(b, host.edits(), ids(), dx, dy)); };
   $('shsim').addEventListener('click', () => {
     const doc = host.doc();
     if (!doc || !sel().size) return;
@@ -226,5 +267,5 @@ export function initShapes(host: ShapesHost) {
   });
   $('shnone').addEventListener('click', () => host.setSelection(new Set()));
 
-  return { render, overlay, pick, rect, del, reorder, cancelCopy: () => { if (copying) setCopying(false); }, get copying() { return copying; } };
+  return { render, overlay, pick, rect, del, reorder, duplicate, knife, nudge, cancelKnife: () => { if (knifeOn) setKnife(false); }, get knifeOn() { return knifeOn; }, cancelCopy: () => { if (copying) setCopying(false); }, get copying() { return copying; } };
 }

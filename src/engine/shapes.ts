@@ -1,7 +1,7 @@
 import { deltaE, recount } from './palette';
 import { flattenPath } from './geom';
-import { retarget } from './gradedit';
-import { unionShapes } from './union';
+import { retarget, shiftGradient } from './gradedit';
+import { booleanOp, splitByLine, unionShapes } from './union';
 import type { Gradient, Layer, Pt, VDoc, VPath } from './types';
 
 /**
@@ -25,6 +25,10 @@ export interface ShapeEdit {
   gradient?: Gradient; // gradiente definido/ajustado à mão (substitui cor/gradiente detectado)
   geom?: VPath[]; // contornos editados à mão (substituem os da forma; não sobrevivem a reprocessar)
   z?: number; // posição de desenho (camadas), no espaço de índices do vetor base; ausente = ordem natural
+  dx?: number; // deslocamento (mover): aplicado à geometria e ao gradiente
+  dy?: number;
+  add?: { paths: VPath[]; like: number }; // forma NOVA (dividir/duplicar): entra logo depois da camada da forma `like`
+  op?: 'union' | 'subtract' | 'intersect'; // como `geom` foi obtida a partir das formas absorvidas
   absorbed?: number; // foi fundida na forma de destino (id): some, e o destino guarda a união como `geom`
   /** âncora para reaplicar a edição depois de reprocessar: um ponto dentro da forma e sua área */
   at?: [number, number];
@@ -143,6 +147,30 @@ export function meanStops(g: Gradient): string {
 
 export const hasShapeEdits = (e: ShapeEdits): boolean => Object.keys(e).length > 0;
 
+export function translatePath(p: VPath, dx: number, dy: number): VPath {
+  const m = (q: Pt): Pt => ({ x: q.x + dx, y: q.y + dy });
+  const out: VPath = { start: m(p.start), segs: p.segs.map((g) => (g.t === 'C' ? { ...g, c1: m(g.c1), c2: m(g.c2), p: m(g.p) } : { ...g, p: m(g.p) })) };
+  if (p.sid !== undefined) out.sid = p.sid;
+  if (p.thin) out.thin = true;
+  return out;
+}
+
+/** Vetor base com as formas NOVAS (dividir/duplicar) já inseridas, cada uma numa camada própria logo depois da camada da forma `like`. */
+export function injectAdded(doc: VDoc, edits: ShapeEdits): VDoc {
+  const adds = Object.entries(edits).filter(([, e]) => e.add).map(([k, e]) => [Number(k), e.add!] as const).sort((a, b) => a[0] - b[0]);
+  if (!adds.length) return doc;
+  const layers = [...doc.layers];
+  for (const [id, a] of adds) {
+    let li = layers.findIndex((l) => l.paths.some((p) => p.sid === a.like));
+    if (li < 0) li = layers.length - 1;
+    layers.splice(li + 1, 0, { ...layers[li], paths: a.paths.map((p) => ({ ...p, sid: id })), fallback: undefined });
+  }
+  return { ...doc, layers };
+}
+
+const nextId = (edits: ShapeEdits) => Math.max(1_000_000, ...Object.keys(edits).map((k) => Number(k) + 1));
+const emptyEdit = (c: ShapeEdit) => !c.hidden && c.color === undefined && c.absorbed === undefined && !c.gradient && !c.geom && c.z === undefined && !c.add && !c.dx && !c.dy;
+
 /** Acrescenta âncora/área a uma edição (necessário para sobreviver a um reprocessamento). */
 export function withAnchor(doc: VDoc, id: number, e: ShapeEdit): ShapeEdit {
   const s = listShapes(doc).find((x) => x.id === id);
@@ -150,19 +178,44 @@ export function withAnchor(doc: VDoc, id: number, e: ShapeEdit): ShapeEdit {
 }
 
 export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: ShapeEdit | null): ShapeEdits {
-  const out = { ...edits };
-  const all = new Map(listShapes(doc).map((s) => [s.id, s]));
+  let out = { ...edits };
+  const all = new Map(listShapes(injectAdded(doc, edits)).map((s) => [s.id, s]));
   for (const id of ids) {
     const s = all.get(id);
     if (!s) continue;
     if (patch === null) { delete out[id]; continue; }
-    const cur = { ...out[id], ...patch };
+    if (patch.geom !== undefined) { out = setShapeGeom(doc, out, id, patch.geom, undefined); continue; }
+    const prev = out[id] ?? {};
+    const cur: ShapeEdit = { ...prev, ...patch };
+    // o gradiente chega no espaço EXIBIDO (já com o deslocamento); é guardado no espaço base
+    if (patch.gradient !== undefined) cur.gradient = shiftGradient(patch.gradient, -(prev.dx ?? 0), -(prev.dy ?? 0));
     if (patch.color !== undefined) delete cur.gradient;
     if (patch.gradient !== undefined) delete cur.color;
     if (!cur.hidden) delete cur.hidden;
-    if (!cur.hidden && cur.color === undefined && cur.absorbed === undefined && !cur.gradient && !cur.geom && cur.z === undefined) { delete out[id]; continue; }
+    if (emptyEdit(cur)) { delete out[id]; continue; }
     out[id] = { ...cur, at: interiorPoint(s.paths), area: s.area };
   }
+  return out;
+}
+
+/**
+ * Define os contornos da forma (no espaço EXIBIDO): o deslocamento atual é incorporado à geometria (dx = dy = 0) e o
+ * gradiente exibido passa a ser explícito para não "andar" junto.
+ */
+export function setShapeGeom(base: VDoc, edits: ShapeEdits, id: number, geom: VPath[], displayGradient?: Gradient): ShapeEdits {
+  const prev = edits[id] ?? {};
+  const dx = prev.dx ?? 0, dy = prev.dy ?? 0;
+  const s = listShapes(injectAdded(base, edits)).find((x) => x.id === id);
+  const cur: ShapeEdit = { ...prev, geom: geom.map((g) => ({ ...g, sid: id })) };
+  delete cur.dx; delete cur.dy;
+  if (displayGradient) { cur.gradient = displayGradient; delete cur.color; } else if (prev.gradient && (dx || dy)) cur.gradient = shiftGradient(prev.gradient, dx, dy);
+  return { ...edits, [id]: s ? { ...cur, at: interiorPoint(s.paths), area: s.area } : cur };
+}
+
+/** Move as formas: soma (dx, dy) ao deslocamento atual de cada uma. */
+export function translateShapes(base: VDoc, edits: ShapeEdits, ids: number[], dx: number, dy: number): ShapeEdits {
+  let out = edits;
+  for (const id of ids) out = editShapes(base, out, [id], { dx: (out[id]?.dx ?? 0) + dx, dy: (out[id]?.dy ?? 0) + dy });
   return out;
 }
 
@@ -173,6 +226,7 @@ export function editShapes(doc: VDoc, edits: ShapeEdits, ids: number[], patch: S
  */
 export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
   if (!hasShapeEdits(edits)) return doc;
+  doc = injectAdded(doc, edits);
   const byId = new Map(listShapes(doc).map((s) => [s.id, s]));
   let hidden = false;
   const emitted = new Set<number>();
@@ -189,10 +243,15 @@ export function applyShapeEdits(doc: VDoc, edits: ShapeEdits): VDoc {
       // contornos editados à mão (ou a união de formas fundidas) substituem TODOS os da forma, emitidos uma só vez
       let pathsOut: VPath[] = [src];
       if (e.geom) { if (emitted.has(src.sid)) continue; emitted.add(src.sid); pathsOut = e.geom.map((g) => ({ ...g, sid: src.sid })); }
-      for (const p of pathsOut) {
+      const mv: [number, number] | null = e.dx || e.dy ? [e.dx ?? 0, e.dy ?? 0] : null;
+      for (const p0 of pathsOut) {
+        const p = mv ? translatePath(p0, mv[0], mv[1]) : p0;
         if (e.hidden) { changed = true; hidden = true; continue; }
-        const paint: { color: string; gradient?: Gradient } | null = e.gradient ? { color: e.color ?? meanStops(e.gradient), gradient: e.gradient } : e.color ? { color: e.color } : null;
-        if (!paint) { if (e.geom) changed = true; keep.push(p); continue; }
+        let paint: { color: string; gradient?: Gradient } | null = null;
+        if (e.gradient) paint = { color: e.color ?? meanStops(e.gradient), gradient: mv ? shiftGradient(e.gradient, mv[0], mv[1]) : e.gradient };
+        else if (e.color) paint = { color: e.color };
+        else if (mv && layer.gradient) paint = { color: layer.color, gradient: shiftGradient(layer.gradient, mv[0], mv[1]) };
+        if (!paint) { if (e.geom || mv) changed = true; keep.push(p); continue; }
         changed = true;
         const key = paint.gradient ? `g${src.sid}` : paint.color;
         let g = groups.get(key);
@@ -238,6 +297,17 @@ function reorderLayers(layers: Layer[], edits: ShapeEdits, baseIdx: Map<number, 
   return out;
 }
 
+/** fusões anteriores que apontavam para alguma das formas `froms` passam a apontar para `to` */
+function repoint(edits: ShapeEdits, froms: number[], to: number): void {
+  for (const [k, e] of Object.entries(edits)) if (e.absorbed !== undefined && froms.includes(e.absorbed) && e.absorbed !== to) edits[Number(k)] = { ...e, absorbed: to };
+}
+
+/** âncora (ponto interior + área) da forma NO VETOR BASE, para reaplicar a edição depois de reprocessar */
+function anchorOf(base: VDoc, edits: ShapeEdits, id: number): ShapeEdit {
+  const b = listShapes(injectAdded(base, edits)).find((s) => s.id === id);
+  return b ? { at: interiorPoint(b.paths), area: b.area } : {};
+}
+
 /**
  * Funde as formas `ids` (do vetor exibido) numa só: a maior é o destino e recebe a UNIÃO geométrica dos contornos
  * (um contorno único, sem costuras); as outras somem. Mantém a tinta do destino.
@@ -246,13 +316,77 @@ export function mergeShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: numbe
   const sel = listShapes(doc).filter((s) => ids.includes(s.id));
   if (sel.length < 2) return edits;
   const main = sel.reduce((a, c) => (c.area > a.area ? c : a));
-  const baseShapes = new Map(listShapes(base).map((s) => [s.id, s]));
-  const anchor = (id: number): ShapeEdit => { const b = baseShapes.get(id); return b ? { at: interiorPoint(b.paths), area: b.area } : {}; };
-  const out: ShapeEdits = { ...edits };
-  for (const [k, e] of Object.entries(out)) if (e.absorbed !== undefined && e.absorbed !== main.id && sel.some((s) => s.id === e.absorbed)) out[Number(k)] = { ...e, absorbed: main.id }; // fusões anteriores passam ao novo destino
-  for (const s of sel) if (s.id !== main.id) out[s.id] = { absorbed: main.id, ...anchor(s.id) };
-  out[main.id] = { ...out[main.id], geom: unionShapes(sel.map((s) => s.paths)).map((p) => ({ ...p, sid: main.id })), ...anchor(main.id) };
+  let out: ShapeEdits = { ...edits };
+  repoint(out, sel.map((s) => s.id), main.id);
+  for (const s of sel) if (s.id !== main.id) out[s.id] = { absorbed: main.id, ...anchorOf(base, out, s.id) };
+  out = setShapeGeom(base, out, main.id, unionShapes(sel.map((s) => s.paths)), main.gradient);
+  out[main.id] = { ...out[main.id], op: 'union' };
   return out;
+}
+
+/**
+ * Recorta uma forma com outras: `subtract` tira da forma de TRÁS a parte coberta pelas da frente; `intersect` mantém só
+ * a sobreposição. As formas da frente são consumidas. Devolve as edições e se o resultado ficou vazio.
+ */
+export function combineShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: number[], op: 'subtract' | 'intersect'): { edits: ShapeEdits; empty: boolean; target: number } | null {
+  const order = effectiveOrder(base, edits);
+  const sel = listShapes(doc).filter((s) => ids.includes(s.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  if (sel.length < 2) return null;
+  const back = sel[0], fronts = sel.slice(1);
+  const geom = booleanOp(back.paths, fronts.map((f) => f.paths), op);
+  let out: ShapeEdits = { ...edits };
+  repoint(out, fronts.map((f) => f.id), back.id);
+  for (const f of fronts) out[f.id] = { absorbed: back.id, ...anchorOf(base, out, f.id) };
+  if (!geom.length) { out[back.id] = { ...out[back.id], hidden: true, ...anchorOf(base, out, back.id) }; return { edits: out, empty: true, target: back.id }; }
+  out = setShapeGeom(base, out, back.id, geom, back.gradient);
+  out[back.id] = { ...out[back.id], op };
+  return { edits: out, empty: false, target: back.id };
+}
+
+/** Insere uma forma nova (dividir/duplicar) logo à frente de `like` na ordem de desenho. */
+function addShape(base: VDoc, edits: ShapeEdits, paths: VPath[], like: number, patch: ShapeEdit): { edits: ShapeEdits; id: number } {
+  const before = effectiveOrder(base, edits);
+  const id = nextId(edits);
+  const out: ShapeEdits = { ...edits, [id]: { add: { paths: paths.map((p) => ({ ...p, sid: id })), like }, ...patch } };
+  const order = [...before];
+  const at = order.indexOf(like);
+  order.splice(at >= 0 ? at + 1 : order.length, 0, id);
+  return { edits: writeOrder(base, out, order), id };
+}
+
+/**
+ * Faca: divide cada forma de `ids` pela reta que passa por p0 e p1. A metade esquerda fica com a forma original; a
+ * direita vira uma forma NOVA (mesma tinta), logo à frente dela. Devolve também os ids de todas as metades.
+ */
+export function splitShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: number[], p0: Pt, p1: Pt): { edits: ShapeEdits; ids: number[] } {
+  const all = new Map(listShapes(doc).map((s) => [s.id, s]));
+  let out = edits;
+  const made: number[] = [];
+  for (const id of ids) {
+    const s = all.get(id);
+    const r = s && splitByLine(s.paths, p0, p1);
+    if (!s || !r) continue;
+    out = setShapeGeom(base, out, id, r[0], s.gradient);
+    const ad = addShape(base, out, r[1], id, s.gradient ? { gradient: s.gradient } : { color: s.color });
+    out = ad.edits;
+    made.push(id, ad.id);
+  }
+  return { edits: out, ids: made };
+}
+
+/** Duplica as formas (cópia deslocada de `offset` px, logo à frente da original). */
+export function duplicateShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: number[], offset = 12): { edits: ShapeEdits; ids: number[] } {
+  const all = new Map(listShapes(doc).map((s) => [s.id, s]));
+  let out = edits;
+  const made: number[] = [];
+  for (const id of ids) {
+    const s = all.get(id);
+    if (!s) continue;
+    const ad = addShape(base, out, s.paths, id, { dx: offset, dy: offset, ...(s.gradient ? { gradient: s.gradient } : { color: s.color }) });
+    out = ad.edits;
+    made.push(ad.id);
+  }
+  return { edits: out, ids: made };
 }
 
 /**
@@ -273,19 +407,22 @@ export function remapShapeEdits(newDoc: VDoc, edits: ShapeEdits): { edits: Shape
     }
     if (best >= 0 && bd <= Math.log(2)) map.set(Number(k), best);
   }
-  const targets = new Set(Object.values(edits).filter((e) => e.absorbed !== undefined).map((e) => e.absorbed!));
+  // só a UNIÃO é recalculável sobre formas novas; recortes (subtrair/interseção) e formas novas (dividir/duplicar) não
+  const targets = new Set(Object.values(edits).filter((e) => e.absorbed !== undefined && (edits[e.absorbed]?.op ?? 'union') === 'union').map((e) => e.absorbed!));
   const out: ShapeEdits = {};
   let dropped = 0, orderLost = false;
   for (const [k, e0] of Object.entries(edits)) {
     const e = { ...e0 };
+    if (e.add) { dropped++; continue; }
+    if (e.absorbed !== undefined && !targets.has(e.absorbed)) { dropped++; continue; }
     if (e.z !== undefined) { orderLost = true; delete e.z; } // a ordem de camadas é por posição: não é remapeável
-    if (!e.hidden && e.color === undefined && e.absorbed === undefined && !e.gradient && !e.geom && !e.at) continue; // só tinha ordem
+    if (!e.hidden && e.color === undefined && e.absorbed === undefined && !e.gradient && !e.geom && !e.at && !e.dx && !e.dy) continue; // só tinha ordem
     const nid = map.get(Number(k));
     if (nid === undefined) { dropped++; continue; }
     const s = shapes.find((x) => x.id === nid)!;
     const next: ShapeEdit = { ...e, at: interiorPoint(s.paths), area: s.area };
     if (e.absorbed !== undefined) { const t = map.get(e.absorbed); if (t === undefined) { dropped++; continue; } next.absorbed = t; }
-    if (next.geom && !targets.has(Number(k))) { delete next.geom; dropped++; if (!next.hidden && next.color === undefined && next.absorbed === undefined && !next.gradient) continue; } // geometria à mão não é remapeável
+    if (next.geom && !targets.has(Number(k))) { delete next.geom; dropped++; if (!next.hidden && next.color === undefined && next.absorbed === undefined && !next.gradient && !next.dx && !next.dy) continue; } // geometria à mão não é remapeável
     out[nid] = next;
   }
   // fusões: a união é recalculada sobre as formas novas (sobrevive a reprocessar)
@@ -334,7 +471,7 @@ function hslHex(h: number, s: number, l: number): string {
 
 /** Ordem de desenho efetiva (fundo → frente) de TODAS as formas do vetor base, inclusive ocultas/fundidas. */
 export function effectiveOrder(base: VDoc, edits: ShapeEdits): number[] {
-  const ids = listShapes(base).map((s) => s.id);
+  const ids = listShapes(injectAdded(base, edits)).map((s) => s.id);
   return ids.map((id, i) => ({ id, i, k: edits[id]?.z ?? i })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.id);
 }
 
@@ -374,9 +511,14 @@ export function reorderShapes(base: VDoc, doc: VDoc, edits: ShapeEdits, ids: num
     const at = rest.indexOf(t) + ('inFrontOf' in op ? 1 : 0);
     a = [...rest.slice(0, at), ...moved, ...rest.slice(at)];
   }
-  const natural = listShapes(base).map((s) => s.id);
+  return writeOrder(base, edits, a);
+}
+
+/** Grava a ordem de desenho `order`: só as formas fora da posição natural recebem `z`. */
+function writeOrder(base: VDoc, edits: ShapeEdits, order: number[]): ShapeEdits {
+  const natural = listShapes(injectAdded(base, edits)).map((s) => s.id);
   const out: ShapeEdits = { ...edits };
-  a.forEach((id, idx) => {
+  order.forEach((id, idx) => {
     const cur = { ...out[id] };
     if (idx === natural.indexOf(id)) delete cur.z; else cur.z = idx;
     if (Object.keys(cur).length) out[id] = cur; else delete out[id];

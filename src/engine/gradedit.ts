@@ -75,3 +75,8 @@ export function retarget(g: Gradient, from: BBox, to: BBox): Gradient {
   if (g.kind === 'linear') return { ...g, x1: mx(g.x1), y1: my(g.y1), x2: mx(g.x2), y2: my(g.y2) };
   return { ...g, cx: mx(g.cx), cy: my(g.cy), r: Math.max(1, g.r * Math.sqrt(Math.abs(sx * sy))) };
 }
+
+/** desloca a geometria do gradiente */
+export function shiftGradient(g: Gradient, dx: number, dy: number): Gradient {
+  return g.kind === 'linear' ? { ...g, x1: g.x1 + dx, y1: g.y1 + dy, x2: g.x2 + dx, y2: g.y2 + dy } : { ...g, cx: g.cx + dx, cy: g.cy + dy };
+}

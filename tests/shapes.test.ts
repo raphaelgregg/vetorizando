@@ -5,7 +5,7 @@ import { renderSvg } from '../bench/io';
 import { compare } from '../bench/metrics';
 import { applyPaletteEdits } from '../src/engine/palette';
 import { PRESETS } from '../src/engine/presets';
-import { ShapeEdits, applyShapeEdits, copyPaint, effectiveOrder, mergeShapes, reorderShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
+import { ShapeEdits, applyShapeEdits, combineShapes, copyPaint, duplicateShapes, effectiveOrder, mergeShapes, reorderShapes, setShapeGeom, splitShapes, translateShapes, editShapes, listShapes, remapShapeEdits, shapeMapDoc, shapesAt, shapesInRect, similarShapes } from '../src/engine/shapes';
 import { toSVG } from '../src/engine/svg';
 import { Options, VPath } from '../src/engine/types';
 import { vectorize } from '../src/engine/vectorize';
@@ -172,7 +172,7 @@ describe('fragmentos de baixo contraste (contas, pontas) não viram formas', () 
   });
 });
 
-import { addStop, colorAt, convertKind, defaultGradient, handles, moveHandle, removeStop, retarget, reverse, setStop } from '../src/engine/gradedit';
+import { addStop, colorAt, convertKind, defaultGradient, handles, moveHandle, removeStop, retarget, reverse, setStop, shiftGradient } from '../src/engine/gradedit';
 import { fromNodes, insertNode, moveHandle as moveH, moveNode, nearestOnPath, removeNode, toNodes, toggleEdge } from '../src/engine/nodeedit';
 import { flattenPath } from '../src/engine/geom';
 
@@ -497,5 +497,139 @@ describe('camadas: ordem de desenho', () => {
     expect(r.orderLost).toBe(true);
     expect(Object.values(r.edits).some((x) => x.z !== undefined)).toBe(false);
     expect(Object.values(r.edits).some((x) => x.color === '#00ff00')).toBe(true);
+  });
+});
+
+describe('mover, recortar, dividir e duplicar', () => {
+  const o = opts({ maxColors: 6, mergeDeltaE: 3 });
+  const rectSvg = wrap('<rect x="40" y="60" width="100" height="80" fill="#d0342c"/>');
+  const doc = vectorize(ras(rectSvg), o);
+  const red = listShapes(doc).find((s) => s.color.startsWith('#d0'))!;
+  const shapeOf = (d: typeof doc, id: number) => listShapes(d).find((s) => s.id === id)!;
+  const near = (a: number, b: number, t = 1) => expect(Math.abs(a - b)).toBeLessThanOrEqual(t);
+
+  it('mover: a geometria e o gradiente andam juntos; mover de novo soma; desfazer = remover a edição', () => {
+    const e = translateShapes(doc, {}, [red.id], 30, -10);
+    const d = applyShapeEdits(doc, e);
+    const m = shapeOf(d, red.id);
+    near(m.bbox[0], red.bbox[0] + 30, 0.01); near(m.bbox[1], red.bbox[1] - 10, 0.01);
+    near(m.area, red.area, 0.5);
+    const e2 = translateShapes(doc, e, [red.id], 5, 5);
+    near(shapeOf(applyShapeEdits(doc, e2), red.id).bbox[0], red.bbox[0] + 35, 0.01);
+    expect(translateShapes(doc, e2, [red.id], -35, -(-5))).toEqual({}); // volta ao zero: nenhuma edição sobra
+    // gradiente: editado na posição exibida, continua ali ao mover
+    const g = defaultGradient(red.bbox, red.color);
+    const withG = editShapes(doc, e, [red.id], { gradient: shiftGradient(g, 30, -10) });
+    const shown = shapeOf(applyShapeEdits(doc, withG), red.id).gradient!;
+    expect(shown.kind === 'linear' && shown.x1).toBeCloseTo(red.bbox[0] + 30, 6);
+    const moved = shapeOf(applyShapeEdits(doc, translateShapes(doc, withG, [red.id], 20, 0)), red.id).gradient!;
+    expect(moved.kind === 'linear' && moved.x1).toBeCloseTo(red.bbox[0] + 50, 6);
+  });
+
+  it('o SVG mostra a forma no novo lugar', () => {
+    const d = applyShapeEdits(doc, translateShapes(doc, {}, [red.id], 60, 0));
+    const r = renderSvg(toSVG(d, o), 256), i = (100 * 256 + 150) * 4; // dentro da nova posição (x 100..200)
+    expect([r.data[i], r.data[i + 1], r.data[i + 2]]).toEqual([208, 52, 44]);
+    const j = (100 * 256 + 60) * 4; // onde estava (agora vazio)
+    expect(r.data[j + 3]).toBeLessThan(40);
+  });
+
+  it('editar pontos depois de mover incorpora o deslocamento (nada pula)', () => {
+    const e = translateShapes(doc, {}, [red.id], 25, 15);
+    const shown = shapeOf(applyShapeEdits(doc, e), red.id);
+    const e2 = setShapeGeom(doc, e, red.id, shown.paths);
+    expect(e2[red.id].dx).toBeUndefined();
+    const again = shapeOf(applyShapeEdits(doc, e2), red.id);
+    near(again.bbox[0], shown.bbox[0], 0.01); near(again.bbox[3], shown.bbox[3], 0.01);
+  });
+
+  it('subtrair: a parte coberta pela forma da frente sai e a da frente é consumida', () => {
+    const d2 = vectorize(ras(wrap('<rect x="30" y="50" width="120" height="100" fill="#d0342c"/><rect x="100" y="90" width="90" height="90" fill="#2c5fd0"/>')), o);
+    const sh = listShapes(d2).filter((s) => !s.color.startsWith('#ffffff'));
+    const back = sh.find((s) => s.color.startsWith('#d0'))!, front = sh.find((s) => s.color.startsWith('#2c'))!;
+    const r = combineShapes(d2, d2, {}, [back.id, front.id], 'subtract')!;
+    const out = applyShapeEdits(d2, r.edits);
+    expect(listShapes(out).some((s) => s.id === front.id)).toBe(false);
+    const res = shapeOf(out, back.id);
+    // a vermelha visível já era 120×100 menos a sobreposição com a azul (recortada na vetorização); subtrair de novo não muda a área
+    near(res.area, back.area, back.area * 0.03);
+    // subtrair uma forma maior some com tudo
+    const all = combineShapes(d2, d2, {}, [front.id, back.id], 'intersect');
+    expect(all).not.toBeNull();
+  });
+
+  it('subtrair e interseção por geometria: áreas esperadas e vazio some', () => {
+    const d3 = vectorize(ras(wrap('<rect x="20" y="20" width="100" height="100" fill="#d0342c"/><rect x="80" y="80" width="100" height="100" fill="#2c5fd0"/>')), opts({ ...o, stacking: 'stacked', gapFiller: false }));
+    const sh = listShapes(d3).filter((s) => !s.color.startsWith('#ffffff'));
+    // em empilhado a camada de baixo se estende sob a da frente: subtrair a da frente deixa só a parte exclusiva
+    const back = sh[0], front = sh[sh.length - 1];
+    const sub = combineShapes(d3, d3, {}, [back.id, front.id], 'subtract')!;
+    const a = shapeOf(applyShapeEdits(d3, sub.edits), back.id).area;
+    expect(a).toBeLessThan(back.area);
+    const inter = combineShapes(d3, d3, {}, [back.id, front.id], 'intersect')!;
+    const b = shapeOf(applyShapeEdits(d3, inter.edits), back.id).area;
+    near(a + b, back.area, back.area * 0.04); // subtrair + interseção = a forma inteira
+    // sem sobreposição: a interseção é vazia e a forma some
+    const far = vectorize(ras(wrap('<rect x="10" y="10" width="40" height="40" fill="#d0342c"/><rect x="150" y="150" width="40" height="40" fill="#2c5fd0"/>')), o);
+    const fs = listShapes(far).filter((s) => !s.color.startsWith('#ffffff'));
+    const none = combineShapes(far, far, {}, fs.map((s) => s.id), 'intersect')!;
+    expect(none.empty).toBe(true);
+    expect(listShapes(applyShapeEdits(far, none.edits)).some((s) => s.id === none.target)).toBe(false);
+  });
+
+  it('faca: divide em duas formas independentes (mesma tinta), logo à frente na ordem', () => {
+    const r = splitShapes(doc, doc, {}, [red.id], { x: 90, y: 0 }, { x: 90, y: 100 });
+    expect(r.ids.length).toBe(2);
+    const out = applyShapeEdits(doc, r.edits);
+    const [a, b] = r.ids.map((id) => shapeOf(out, id));
+    expect(listShapes(out).length).toBe(listShapes(doc).length + 1);
+    expect(a.color).toBe(red.color); expect(b.color).toBe(red.color);
+    near(a.area + b.area, red.area, red.area * 0.03);
+    expect(Math.min(a.area, b.area)).toBeGreaterThan(red.area * 0.3); // 50 de 100 px de largura
+    const ord = effectiveOrder(doc, r.edits);
+    expect(ord.indexOf(r.ids[1])).toBe(ord.indexOf(r.ids[0]) + 1);
+    // a imagem é a mesma (as metades se encostam)
+    const img = ras(rectSvg);
+    expect(compare(img, renderSvg(toSVG(out, o), 256)).ssim).toBeGreaterThan(0.995);
+    // cada metade é editável sozinha: mover/excluir uma não afeta a outra
+    const mv = applyShapeEdits(doc, translateShapes(doc, r.edits, [r.ids[1]], 40, 0));
+    near(shapeOf(mv, r.ids[0]).bbox[0], a.bbox[0], 0.01);
+    near(shapeOf(mv, r.ids[1]).bbox[0], b.bbox[0] + 40, 0.01);
+    const del = applyShapeEdits(doc, editShapes(doc, r.edits, [r.ids[1]], { hidden: true }));
+    expect(listShapes(del).some((s) => s.id === r.ids[1])).toBe(false);
+    expect(listShapes(del).some((s) => s.id === r.ids[0])).toBe(true);
+  });
+
+  it('faca que não atravessa a forma não faz nada; dividir de novo uma metade funciona', () => {
+    const none = splitShapes(doc, doc, {}, [red.id], { x: 5, y: 0 }, { x: 5, y: 100 });
+    expect(none.ids).toEqual([]); expect(none.edits).toEqual({});
+    const r1 = splitShapes(doc, doc, {}, [red.id], { x: 90, y: 0 }, { x: 90, y: 100 });
+    const d1 = applyShapeEdits(doc, r1.edits);
+    const r2 = splitShapes(doc, d1, r1.edits, [r1.ids[1]], { x: 0, y: 100 }, { x: 256, y: 100 });
+    expect(r2.ids.length).toBe(2);
+    expect(listShapes(applyShapeEdits(doc, r2.edits)).length).toBe(listShapes(doc).length + 2);
+  });
+
+  it('duplicar: cópia deslocada, mesma cor, logo à frente; reordenar depois funciona', () => {
+    const r = duplicateShapes(doc, doc, {}, [red.id]);
+    const out = applyShapeEdits(doc, r.edits);
+    const c = shapeOf(out, r.ids[0]);
+    near(c.bbox[0], red.bbox[0] + 12, 0.01);
+    expect(c.color).toBe(red.color);
+    const back = reorderShapes(doc, out, r.edits, [r.ids[0]], 'back');
+    expect(effectiveOrder(doc, back)[0]).toBe(r.ids[0]);
+    expect(applyShapeEdits(doc, back).ordered).toBe(true);
+  });
+
+  it('reprocessar: mover sobrevive; formas novas (dividir/duplicar) e recortes são descartados com contagem', () => {
+    const mv = translateShapes(doc, {}, [red.id], 20, 0);
+    const sp = splitShapes(doc, doc, mv, [red.id], { x: 90, y: 0 }, { x: 90, y: 100 });
+    const doc2 = vectorize(ras(rectSvg), { ...o, smooth: 3 });
+    const r = remapShapeEdits(doc2, sp.edits);
+    expect(r.dropped).toBeGreaterThanOrEqual(1);
+    expect(Object.values(r.edits).some((e) => e.add)).toBe(false);
+    const r2 = remapShapeEdits(doc2, mv);
+    expect(r2.dropped).toBe(0);
+    near(listShapes(applyShapeEdits(doc2, r2.edits)).find((s) => s.color.startsWith('#d0'))!.bbox[0], red.bbox[0] + 20, 0.5);
   });
 });

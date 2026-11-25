@@ -2,7 +2,7 @@ import './style.css';
 import { autoOptions } from './engine/analyze';
 import { PRESETS } from './engine/presets';
 import { PaletteEdits, applyPaletteEdits, backgroundOriginal, canHideWithoutReprocess, suggestCurrentColor } from './engine/palette';
-import { ShapeEdits, applyShapeEdits, editShapes, hasShapeEdits, listShapes, remapShapeEdits, shapeMapDoc } from './engine/shapes';
+import { ShapeEdits, applyShapeEdits, hasShapeEdits, listShapes, remapShapeEdits, setShapeGeom, shapeMapDoc, shapesAt, translateShapes, editShapes } from './engine/shapes';
 import { SvgColors, toSVG } from './engine/svg';
 import type { Options, VDoc } from './engine/types';
 import { FORMATS, Format, exportDoc } from './export';
@@ -462,7 +462,7 @@ function refreshOverlay() {
   const s = one && state.doc && state.baseDoc ? listShapes(state.doc).find((x) => x.id === ids[0]) : undefined;
   if (!s) return;
   const base = state.baseDoc!, id = s.id;
-  if (state.nodeMode) overlay.openNodes(s.paths, id, (paths) => commitShapes(editShapes(base, state.shapeEdits, [id], { geom: paths })), (d) => viewer.setSelection(d));
+  if (state.nodeMode) overlay.openNodes(s.paths, id, (paths) => commitShapes(setShapeGeom(base, state.shapeEdits, id, paths, s.gradient)), (d) => viewer.setSelection(d));
   else if (s.gradient) overlay.openGradient(s.gradient, (g) => previewShapes(editShapes(base, state.shapeEdits, [id], { gradient: g })), (g) => commitShapes(editShapes(base, state.shapeEdits, [id], { gradient: g })));
 }
 const shapes = initShapes({
@@ -475,7 +475,22 @@ const shapes = initShapes({
   preview: previewShapes,
   hint: (t) => { $('shapehint').textContent = t; },
   picking: (on) => $('viewer').classList.toggle('picking', on),
+  knife: (on) => { viewer.setKnife(on); if (on && !state.editMode) $('edit').click(); },
 });
+// mover: arrastar uma forma selecionada (ao vivo; um só passo no histórico ao soltar)
+let moveStart: ShapeEdits | null = null;
+viewer.movable = (x, y) => {
+  if (state.nodeMode || shapes.copying || shapes.knifeOn || !state.selection.size || !state.doc) return false;
+  const hit = shapesAt(state.doc, x, y);
+  return hit.length > 0 && state.selection.has(hit[0]);
+};
+viewer.onMove = (dx, dy, final) => {
+  if (!state.baseDoc) return;
+  moveStart ??= state.shapeCommitted;
+  const e = translateShapes(state.baseDoc, moveStart, [...state.selection], dx, dy);
+  if (final) { moveStart = null; commitShapes(e); } else previewShapes(e);
+};
+viewer.onKnife = (p0, p1) => shapes.knife(p0, p1);
 viewer.onPick = (x, y, shift, alt) => shapes.pick(x, y, shift, alt);
 viewer.onRect = (r, shift, alt) => shapes.rect(r, shift, alt);
 $('undo').addEventListener('click', undo);
@@ -507,6 +522,9 @@ $('shapemap').addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (state.app !== 'vector' || state.step !== 2 || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
   const mod = e.ctrlKey || e.metaKey;
+  if (state.editMode && !state.nodeMode && state.selection.size && e.key.startsWith('Arrow')) { e.preventDefault(); const k = e.shiftKey ? 10 : 1; shapes.nudge(e.key === 'ArrowLeft' ? -k : e.key === 'ArrowRight' ? k : 0, e.key === 'ArrowUp' ? -k : e.key === 'ArrowDown' ? k : 0); return; }
+  if (mod && state.editMode && e.key.toLowerCase() === 'd') { e.preventDefault(); shapes.duplicate(); return; }
+  if (state.editMode && e.key === 'Escape' && shapes.knifeOn) { shapes.cancelKnife(); return; }
   if (mod && state.editMode && (e.code === 'BracketRight' || e.code === 'BracketLeft')) { e.preventDefault(); const up = e.code === 'BracketRight'; shapes.reorder(e.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward'); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
