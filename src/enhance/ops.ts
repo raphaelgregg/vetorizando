@@ -1,5 +1,6 @@
 import { denoise } from '../engine/denoise';
 import type { RawImage } from '../engine/types';
+import { CropShape, Transform, prepare } from './crop';
 
 /** Parâmetros da melhoria de imagem (sem vetorizar). Controles de -100 a 100 são neutros em 0. */
 export interface EnhanceParams {
@@ -24,7 +25,9 @@ export interface OutputSpec {
   fx: number; // posição do corte/colocação (0–1)
   fy: number;
   background: string | null; // cor das bordas em "contain"; null = transparente
-  circle: boolean; // recorte circular (cantos transparentes)
+  circle: boolean; // recorte circular (cantos transparentes); equivale a shape = 'ellipse'
+  shape?: CropShape; // forma do recorte: retângulo, retângulo arredondado ou elipse (círculo se quadrado)
+  radius?: number; // arredondamento (0–0,5 do menor lado) para 'rounded'
 }
 
 const clamp8 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
@@ -210,6 +213,28 @@ export function fitToSize(img: RawImage, W: number, H: number, mode: 'cover' | '
   return { data: out, width: W, height: H };
 }
 
+/** Forma do recorte com borda suavizada (1 px): retângulo arredondado ou elipse inscrita; cantos transparentes. */
+export function applyShape(img: RawImage, shape: CropShape, radius = 0.15): RawImage {
+  if (shape === 'rect') return img;
+  const { width: w, height: h } = img, out = copy(img), cx = w / 2, cy = h / 2;
+  const rr = Math.max(0, Math.min(0.5, radius)) * Math.min(w, h);
+  const a = w / 2, b = h / 2;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const px = x + 0.5 - cx, py = y + 0.5 - cy;
+    let d: number; // distância com sinal ao contorno (negativa dentro)
+    if (shape === 'rounded') {
+      const qx = Math.max(Math.abs(px) - (a - rr), 0), qy = Math.max(Math.abs(py) - (b - rr), 0);
+      d = Math.hypot(qx, qy) - rr + (qx === 0 && qy === 0 ? Math.min(0, Math.max(Math.abs(px) - (a - rr), Math.abs(py) - (b - rr))) : 0);
+    } else {
+      const g = (px * px) / (a * a) + (py * py) / (b * b), gx = (2 * px) / (a * a), gy = (2 * py) / (b * b);
+      d = (g - 1) / Math.max(1e-9, Math.hypot(gx, gy));
+    }
+    const cov = Math.min(1, Math.max(0, 0.5 - d));
+    if (cov < 1) out.data[(y * w + x) * 4 + 3] = Math.round(out.data[(y * w + x) * 4 + 3] * cov);
+  }
+  return out;
+}
+
 /** Cantos transparentes: círculo inscrito com borda suavizada (1 px). */
 export function applyCircle(img: RawImage): RawImage {
   const { width: w, height: h } = img, out = copy(img), R = Math.min(w, h) / 2, cx = w / 2, cy = h / 2;
@@ -224,8 +249,8 @@ export function applyCircle(img: RawImage): RawImage {
  * Melhoria completa. Se a origem é bem maior que a saída (> 2×), primeiro reduz até 2× a saída (mais rápido, e o
  * ruído já sai atenuado); depois: ruído → níveis/balanço → cor → ajuste ao tamanho → nitidez (já na escala final) → círculo.
  */
-export function enhance(src: RawImage, p: EnhanceParams, out?: OutputSpec): RawImage {
-  let img = src;
+export function enhance(src: RawImage, p: EnhanceParams, out?: OutputSpec, t?: Transform): RawImage {
+  let img = t ? prepare(src, t) : src; // giro/espelho/endireitar + recorte antes de tudo (reduz o trabalho seguinte)
   if (out && Math.max(src.width, src.height) > 2 * Math.max(out.width, out.height)) img = fitToSize(img, out.width * 2, out.height * 2, out.fit, out.fx, out.fy, out.background);
   if (p.denoise > 0) img = denoise(img, p.denoise).image;
   if (p.auto) img = autoLevels(img);
@@ -233,6 +258,7 @@ export function enhance(src: RawImage, p: EnhanceParams, out?: OutputSpec): RawI
   img = adjust(img, p);
   if (out) img = fitToSize(img, out.width, out.height, out.fit, out.fx, out.fy, out.background);
   if (p.sharpen > 0) img = unsharp(img, (p.sharpen / 100) * 1.4, Math.min(2.5, Math.max(0.5, (Math.max(img.width, img.height) / 1080) * 0.9)));
-  if (out?.circle) img = applyCircle(img);
+  const shape = out?.shape ?? (out?.circle ? 'ellipse' : 'rect');
+  if (shape !== 'rect') img = applyShape(img, shape, out?.radius);
   return img;
 }

@@ -34,6 +34,7 @@ export class Viewer {
   private selEl = el('div', 'selection');
   private marquee = el('div', 'marquee');
   private ovEl = el('div', 'handles');
+  private ovOn = false;
   private drag: { x0: number; y0: number; moved: boolean; kind: 'marquee' | 'move' | 'knife' } | null = null;
   private knifeEl = el('div', 'knifeline');
   /** ferramenta faca ligada: arrastar traça uma reta de corte */
@@ -92,6 +93,9 @@ export class Viewer {
   }
 
   setEditMode(on: boolean): void { this.edit = on; this.root.classList.toggle('editing', on); if (!on) { this.drag = null; this.marquee.hidden = true; this.knifeEl.hidden = true; } }
+
+  /** mostra a camada de alças (recorte) mesmo sem o modo de edição de formas */
+  setOverlayVisible(on: boolean): void { this.ovOn = on; this.render(); }
 
   /** cursor/estado da ferramenta faca */
   setKnife(on: boolean): void { this.knife = on; this.root.classList.toggle('knife', on); }
@@ -172,7 +176,7 @@ export class Viewer {
     this.vecEl.style.display = this.wire ? 'none' : '';
     this.wireEl.style.display = this.wire ? '' : 'none';
     this.selEl.style.display = this.edit ? '' : 'none';
-    this.ovEl.style.display = this.edit ? '' : 'none';
+    this.ovEl.style.display = this.edit || this.ovOn ? '' : 'none';
     const cmp = m === 'compare' && !this.wire;
     this.b.style.clipPath = cmp ? `inset(0 0 0 ${this.split * rw}px)` : 'none';
     // o original só aparece à esquerda do divisor: senão ele vazaria por baixo das áreas transparentes do vetor
