@@ -9,6 +9,10 @@
 <body>
   <header class="top">
     <div class="brand"><span class="logo">V</span> Vetorizando</div>
+    <div class="seg" id="modeseg" role="group" aria-label="O que você quer fazer">
+      <button data-app="vector" class="on" title="Converte a imagem em SVG, PDF, EPS ou DXF">Vetorizar</button>
+      <button data-app="enhance" title="Só melhora a imagem e exporta PNG/JPG para redes sociais">Melhorar imagem</button>
+    </div>
     <nav class="stepper" aria-label="Etapas">
       <button data-go="1" class="step on"><b>1</b> Enviar</button>
       <button data-go="2" class="step" disabled><b>2</b> Inspecionar</button>
@@ -117,6 +121,27 @@
       </aside>
       </div>
       <div class="bar"><div id="prog" class="prog"><i></i><span></span></div><button id="next" class="primary">Continuar → Exportar</button></div>
+    </section>
+
+    <section id="stepE" class="panel" hidden>
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Visualização">
+          <button data-emode="compare" class="on">Antes/Depois</button>
+          <button data-emode="vector">Depois</button>
+          <button data-emode="original">Antes</button>
+        </div>
+        <div class="seg">
+          <button id="ezout" aria-label="Menos zoom">−</button>
+          <button id="ezfit">Ajustar</button>
+          <button id="ezin" aria-label="Mais zoom">+</button>
+        </div>
+        <div id="estat" class="stats"></div>
+      </div>
+      <div class="studio">
+        <div class="studio-main"><div id="viewerE" class="viewer"></div></div>
+        <aside id="enhpanel" class="palette enh" aria-label="Melhorar imagem e exportar"></aside>
+      </div>
+      <div class="bar"><div id="eprog" class="prog"><i></i><span></span></div><button id="edl" class="primary">Baixar PNG</button></div>
     </section>
 
     <section id="step3" class="panel" hidden>

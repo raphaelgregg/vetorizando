@@ -102,6 +102,9 @@ export class Viewer {
     return [(cx - r.left - this.tx) / this.scale, (cy - r.top - this.ty) / this.scale];
   }
 
+  /** rótulos dos lados do comparador (padrão: Original / Vetor) */
+  setLabels(a: string, b: string): void { this.tagA.textContent = a; this.tagB.textContent = b; }
+
   setMode(m: Mode): void { this.mode = m; this.render(); }
   setWire(on: boolean): void { this.wire = on; this.render(); }
   zoomBy(f: number): void { const r = this.root.getBoundingClientRect(); this.zoomAt(f, r.left + r.width / 2, r.top + r.height / 2); }

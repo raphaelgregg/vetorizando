@@ -11,6 +11,7 @@ import { EngineClient } from './ui/client';
 import { initIcons } from './ui/icons';
 import { initPalette } from './ui/palette';
 import { Overlay } from './ui/handles';
+import { initEnhance } from './ui/enhance';
 import { initShapes } from './ui/shapes';
 import { Loaded, LoadError, loadFile } from './ui/loader';
 import { SAMPLES, renderSample, sampleToFile } from './ui/samples';
@@ -20,6 +21,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 const state = {
   step: 1,
+  /** o que o usuário quer fazer: vetorizar (SVG/PDF/EPS/DXF) ou só melhorar a imagem e exportar PNG */
+  app: 'vector' as 'vector' | 'enhance',
   loaded: null as Loaded | null,
   /** vetor como saiu do motor (sem edições) */
   baseDoc: null as VDoc | null,
@@ -53,6 +56,8 @@ const client = new EngineClient();
 const viewer = new Viewer($('viewer'));
 const viewer2 = new Viewer($('viewer2'));
 viewer2.setMode('vector');
+const viewerE = new Viewer($('viewerE'));
+viewerE.setLabels('Antes', 'Depois');
 
 // ---------- tema ----------
 function applyTheme(t: string | null) { if (t) document.documentElement.dataset.theme = t; }
@@ -75,15 +80,42 @@ function showMsg(text: string) {
 
 // ---------- navegação ----------
 function go(n: number) {
+  const enh = state.app === 'enhance';
+  if (enh && n === 3) n = 2; // melhorar imagem tem uma só etapa depois do envio
   state.step = n;
-  for (let i = 1; i <= 3; i++) $(`step${i}`).hidden = i !== n;
+  for (let i = 1; i <= 3; i++) $(`step${i}`).hidden = i !== n || (enh && i > 1);
+  $('stepE').hidden = !(enh && n === 2);
   document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => b.classList.toggle('on', Number(b.dataset.go) === n));
-  requestAnimationFrame(() => (n === 2 ? viewer : viewer2).fit());
-  icons.setActive(n === 3 && mode3 === 'icons');
+  requestAnimationFrame(() => (enh ? viewerE : n === 2 ? viewer : viewer2).fit());
+  icons.setActive(!enh && n === 3 && mode3 === 'icons');
 }
 document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => b.addEventListener('click', () => go(Number(b.dataset.go))));
 $('next').addEventListener('click', () => go(3));
 $('back').addEventListener('click', () => go(2));
+
+// ---------- modo: vetorizar × só melhorar a imagem ----------
+const enhanceUI = initEnhance(viewerE, showMsg);
+function setApp(app: 'vector' | 'enhance') {
+  state.app = app;
+  document.querySelectorAll<HTMLButtonElement>('[data-app]').forEach((b) => b.classList.toggle('on', b.dataset.app === app));
+  const enh = app === 'enhance';
+  document.querySelector<HTMLButtonElement>('.step[data-go="2"]')!.innerHTML = `<b>2</b> ${enh ? 'Melhorar e exportar' : 'Inspecionar'}`;
+  $('step3').hidden = true;
+  document.querySelector<HTMLButtonElement>('.step[data-go="3"]')!.hidden = enh;
+  if (!enh) enhanceUI.stop();
+  if (state.loaded) {
+    go(Math.max(2, state.step));
+    if (enh) enhanceUI.setImage(state.loaded); else if (!state.baseDoc) process();
+  } else go(1);
+}
+document.querySelectorAll<HTMLButtonElement>('[data-app]').forEach((b) => b.addEventListener('click', () => setApp(b.dataset.app as 'vector' | 'enhance')));
+document.querySelectorAll<HTMLButtonElement>('[data-emode]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-emode]').forEach((x) => x.classList.toggle('on', x === b));
+  viewerE.setMode(b.dataset.emode as Mode);
+}));
+$('ezin').addEventListener('click', () => viewerE.zoomBy(1.25));
+$('ezout').addEventListener('click', () => viewerE.zoomBy(1 / 1.25));
+$('ezfit').addEventListener('click', () => viewerE.fit());
 
 // ---------- upload ----------
 async function handleFile(file: File | null | undefined) {
@@ -102,7 +134,7 @@ async function handleFile(file: File | null | undefined) {
     refreshSize();
     document.querySelectorAll<HTMLButtonElement>('.step').forEach((b) => (b.disabled = false));
     go(2);
-    process();
+    if (state.app === 'enhance') enhanceUI.setImage(loaded); else process();
   } catch (e) {
     showMsg(e instanceof LoadError ? e.message : 'Erro ao abrir a imagem.');
   }
@@ -473,7 +505,7 @@ $('shapemap').addEventListener('click', () => {
   refreshFromEdits();
 });
 window.addEventListener('keydown', (e) => {
-  if (state.step !== 2 || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
+  if (state.app !== 'vector' || state.step !== 2 || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && state.editMode && (e.code === 'BracketRight' || e.code === 'BracketLeft')) { e.preventDefault(); const up = e.code === 'BracketRight'; shapes.reorder(e.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward'); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
